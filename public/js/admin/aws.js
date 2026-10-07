@@ -2,6 +2,35 @@
 
 window._awsAccounts = [];
 
+function readAwsQueryServices(id) {
+  const selected = document.getElementById(id).value;
+  return selected === 'ec2' || selected === 'lightsail' ? [selected] : ['ec2', 'lightsail'];
+}
+
+function renderAwsQueryErrors(account) {
+  const errors = account.errors || [];
+  if (!errors.length) return '';
+  const serviceNames = [...new Set(errors.map(e => e.service === 'lightsail' ? 'Lightsail' : 'EC2'))].join(' / ');
+  const summary = account.status === 'error' ? serviceNames + ' 查询失败，无法确认是否有实例'
+    : '已显示 ' + account.instances.length + ' 个实例；' + serviceNames + ' 查询未完成';
+  const groups = new Map();
+  for (const error of errors) {
+    const key = JSON.stringify([error.service, error.operation, error.code, error.message]);
+    if (!groups.has(key)) groups.set(key, { ...error, regions: new Set() });
+    groups.get(key).regions.add(error.region);
+  }
+  const color = account.status === 'error' ? 'text-red-400' : 'text-amber-300';
+  const rows = [...groups.values()].map(e => '<li class="mb-2">' +
+    escapeHtml(e.service === 'lightsail' ? 'Lightsail' : 'EC2') + ' · ' +
+    escapeHtml(e.operation ? e.operation + ' / ' + e.code : e.code) + '：' + escapeHtml(e.message) +
+    '<div class="text-gray-400">区域：' + escapeHtml([...e.regions].join(', ')) + '</div></li>').join('');
+  return '<details class="text-xs text-left mb-3 px-3 py-2 rounded-xl bg-black/20 ' + color + '">' +
+    '<summary class="cursor-pointer">' + escapeHtml(summary) + ' · 查看详情（' + errors.length + ' 项）</summary>' +
+    '<ul class="mt-2">' + rows + '</ul>' +
+    '<button type="button" data-action="edit-aws-services" data-account-id="' + (parseInt(account.accountId) || 0) +
+    '" class="text-gray-300 px-2 py-1 rounded-lg bg-white/5">编辑此账号的查询服务</button></details>';
+}
+
 function invalidateAwsInstancesCache() {
   _awsInstancesRevision += 1;
   try { localStorage.removeItem(AWS_CACHE_KEY); } catch (_) {}
@@ -30,7 +59,7 @@ async function loadAwsConfig() {
   list.innerHTML = (cfg.accounts || []).map(a =>
     '<div class="flex items-center justify-between rounded-xl bg-black/20 border border-white/5 px-3 py-2.5">' +
     '<div class="min-w-0"><div class="text-xs text-white font-medium truncate">#' + escapeHtml(a.id) + ' ' + escapeHtml(a.name) + '</div>' +
-    '<div class="text-[11px] text-gray-500 mt-0.5 truncate">' + escapeHtml(a.accessKeyMasked) + ' · 自动发现实例区域' + (a.socks5_host ? ' · SOCKS ' + escapeHtml(a.socks5_host) + ':' + escapeHtml(a.socks5_port) : '') + '</div></div>' +
+    '<div class="text-[11px] text-gray-500 mt-0.5 truncate">' + escapeHtml(a.accessKeyMasked) + ' · ' + escapeHtml((a.queryServices || ['ec2', 'lightsail']).map(service => service === 'ec2' ? 'EC2' : 'Lightsail').join(' / ')) + ' · 自动发现实例区域' + (a.socks5_host ? ' · SOCKS ' + escapeHtml(a.socks5_host) + ':' + escapeHtml(a.socks5_port) : '') + '</div></div>' +
     '<div class="flex items-center gap-2">' +
     '<button type="button" data-action="edit-aws-account" data-aws-id="' + parseInt(a.id) + '" class="text-gray-300 hover:text-white text-xs px-2 py-1 rounded-lg bg-white/5 border border-white/10">编辑</button>' +
     '<button type="button" data-action="delete-aws-account" data-aws-id="' + parseInt(a.id) + '" class="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded-lg bg-red-500/10 border border-red-500/20">删除</button>' +
@@ -54,6 +83,7 @@ async function loadAwsConfig() {
 
 async function saveAwsConfig() {
   const name = document.getElementById('aws-name').value.trim();
+  const queryServices = readAwsQueryServices('aws-query-services');
   const ak = document.getElementById('aws-ak').value.trim();
   const sk = document.getElementById('aws-sk').value.trim();
   const socks5Url = document.getElementById('aws-socks-url').value.trim();
@@ -63,7 +93,7 @@ async function saveAwsConfig() {
 
   const res = await fetch('/admin/api/aws/config', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window._csrf || '' },
-    body: JSON.stringify({ name, accessKey: ak, secretKey: sk, socks5Url })
+    body: JSON.stringify({ name, accessKey: ak, secretKey: sk, socks5Url, queryServices })
   });
   if (res.ok) {
     invalidateAwsInstancesCache();
@@ -113,6 +143,8 @@ function editAwsAccount(id) {
   if (!a) { showToast('账号不存在'); return; }
   document.getElementById('edit-aws-id').value = id;
   document.getElementById('edit-aws-name').value = a.name || '';
+  const services = a.queryServices || ['ec2', 'lightsail'];
+  document.getElementById('edit-aws-query-services').value = services.length === 1 ? services[0] : 'both';
   document.getElementById('edit-aws-ak').value = a.accessKeyMasked || '';
   document.getElementById('edit-aws-socks').value = a.socks5_host ? 'socks5://' + a.socks5_host + ':' + (a.socks5_port || 1080) : '';
   document.getElementById('edit-aws-socks').dataset.originalValue = document.getElementById('edit-aws-socks').value;
@@ -127,6 +159,7 @@ function closeAwsEditModal() {
 async function saveAwsEdit() {
   const id = parseInt(document.getElementById('edit-aws-id').value);
   const name = document.getElementById('edit-aws-name').value.trim();
+  const queryServices = readAwsQueryServices('edit-aws-query-services');
   const socksInput = document.getElementById('edit-aws-socks');
   // 显示值不含已保存的代理密码。只在用户改动时提交，避免编辑区域时清除代理认证。
   const socks5Url = socksInput.value.trim() === socksInput.dataset.originalValue ? undefined : socksInput.value.trim();
@@ -134,10 +167,13 @@ async function saveAwsEdit() {
   if (!name) { showToast('账号名不能为空'); return; }
   const res = await fetch('/admin/api/aws/config/' + id, {
     method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window._csrf || '' },
-    body: JSON.stringify({ name, socks5Url })
+    body: JSON.stringify({ name, socks5Url, queryServices })
   });
   const d = await res.json().catch(() => ({}));
-  if (res.ok) { invalidateAwsInstancesCache(); showToast('✅ 账号已更新'); closeAwsEditModal(); loadAwsConfig(); }
+  if (res.ok) {
+    invalidateAwsInstancesCache(); showToast('✅ 账号已更新'); closeAwsEditModal();
+    await loadAwsConfig(); await loadAllInstances(true);
+  }
   else showToast('❌ ' + (d.error || '更新失败'));
 }
 
@@ -180,7 +216,7 @@ async function swapNodeIp(nodeId, nodeName, btn) {
   done();
 }
 
-const AWS_CACHE_KEY = 'aws_instances_cache_v3';
+const AWS_CACHE_KEY = 'aws_instances_cache_v4';
 let _awsInstancesRevision = 0;
 const AWS_CACHE_TTL = 30 * 60 * 1000; // 30 分钟
 
@@ -245,10 +281,7 @@ function renderInstances(accounts, container) {
       }
       const errors = acc.errors || [];
       if (errors.length) {
-        html += '<div class="text-xs text-red-400 mb-3 px-3 py-2 rounded-xl bg-red-500/10">' +
-          (acc.status === 'error' ? '查询失败，无法确认是否有实例' : '部分查询失败，以下结果可能不完整') +
-          '<ul class="mt-1">' + errors.map(e => '<li>' + escapeHtml(e.region) + ' · ' +
-            escapeHtml(e.service.toUpperCase()) + ' · ' + escapeHtml(e.operation ? e.operation + ' / ' + e.code : e.code) + '：' + escapeHtml(e.message) + '</li>').join('') + '</ul></div>';
+        html += renderAwsQueryErrors(acc);
       } else if (acc.instances.length === 0) {
         html += '<p class="text-gray-500 text-xs mb-3">' + (acc.status === 'skipped'
           ? '未选择查询区域，请调整区域筛选后刷新'
@@ -318,6 +351,8 @@ function renderInstances(accounts, container) {
     container.innerHTML = html;
     if (!container.dataset.boundSwapAction) {
       container.addEventListener('click', (e) => {
+        const edit = e.target.closest('button[data-action="edit-aws-services"]');
+        if (edit) { editAwsAccount(parseInt(edit.dataset.accountId, 10)); return; }
         const btn = e.target.closest('button[data-action="aws-swap-ip"]');
         if (!btn) return;
         awsSwapIp(

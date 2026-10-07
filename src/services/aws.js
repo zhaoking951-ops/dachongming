@@ -5,6 +5,7 @@ const { SocksProxyAgent } = require('socks-proxy-agent');
 const db = require('./database');
 const logger = require('./logger');
 const { encrypt, decrypt } = require('../utils/crypto');
+const { AWS_QUERY_SERVICES, getQueryServices } = require('../utils/awsServices');
 
 // ========== AWS 区域常量 ==========
 
@@ -121,6 +122,7 @@ function setAwsConfig(cfg) {
     access_key: cfg.accessKey,
     secret_key: cfg.secretKey,
     default_region: cfg.defaultRegion || 'us-east-1',
+    query_services: JSON.stringify(cfg.queryServices || AWS_QUERY_SERVICES),
     socks5_host: cfg.socks5Host,
     socks5_port: cfg.socks5Port || 1080,
     socks5_user: cfg.socks5User,
@@ -666,8 +668,8 @@ function describeScanError(err) {
   const rawCode = err?.name === 'Error' ? err?.code : (err?.name || err?.code);
   const code = typeof rawCode === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(rawCode) ? rawCode : 'AwsRequestError';
   let message = '查询失败，请检查该账号的区域、凭据及网络/代理配置';
-  if (/AccessDenied|Unauthorized|AuthFailure|OptInRequired/i.test(code)) message = '无权查询，请检查 IAM 权限及该区域是否已启用';
-  if (/InvalidClientToken|InvalidAccessKey|Signature|ExpiredToken|Credentials/i.test(code)) message = '凭据无效或已过期，请检查该账号的 Access Key 和 Secret Key';
+  if (/AccessDenied|Unauthorized|OptInRequired/i.test(code)) message = '请求被 AWS 拒绝，具体原因需核对该服务的授权、认证或区域状态';
+  if (/AuthFailure|UnrecognizedClient|InvalidClientToken|InvalidAccessKey|Signature|ExpiredToken|Credentials/i.test(code)) message = '该服务未接受当前请求的身份，请核对凭据和区域状态';
   if (/Timeout|Abort/i.test(code)) message = '查询超时，请减少筛选区域或检查网络/代理';
   return { code, message };
 }
@@ -709,24 +711,27 @@ async function listAllInstances({ concurrency = 6, requestTimeoutMs = 12000, tim
   const enabledRegions = getEnabledRegions();
   const results = accounts.map(account => ({
     accountId: account.id, accountName: account.name, instances: [], errors: [],
+    queryServices: getQueryServices(account),
     queriedRegions: [], discoveredRegions: [], autoDiscover: enabledRegions === null, status: 'ok'
   }));
   const jobs = [];
   const deadline = Date.now() + timeoutMs;
   if (enabledRegions === null) {
     // 分别发现 EC2 与 Lightsail 区域；某个服务无权限不会阻止另一个服务。
-    const discoveryJobs = results.flatMap(result => ['ec2', 'lightsail'].map(service => ({ result, service })));
+    const discoveryJobs = results.flatMap(result => result.queryServices.map(service => ({ result, service })));
     await runScanJobs(discoveryJobs, concurrency, async ({ result, service }) => {
       let regions;
       try {
         regions = await withScanTimeout(options => discoverAwsRegions(service, result.accountId, options),
           Math.min(requestTimeoutMs, deadline - Date.now()));
       } catch (err) {
-        // 某些 IAM 策略允许查实例但不允许列区域；保留已知区域回退，并明确提示不完整。
+        // Lightsail 区域发现失败时停止自动扫描，避免扩散成十几条重复失败。
+        // 如 GetInstances 可用但 GetRegions 不可用，用户仍可手动选区域查询。
         const detail = describeScanError(err);
         result.errors.push({ region: '区域发现', service, operation: service === 'ec2' ? 'DescribeRegions' : 'GetRegions',
-          ...detail, message: detail.message + '；区域列表读取失败，已尝试已知区域' });
-        regions = service === 'ec2' ? ALL_AWS_REGIONS : [...LIGHTSAIL_REGIONS];
+          ...detail, message: detail.message + (service === 'ec2' ? '；区域列表读取失败，已尝试已知区域'
+            : '；本次 Lightsail 自动扫描已停止，可手动选区域重试，或在账号设置中关闭不使用的服务') });
+        regions = service === 'ec2' ? ALL_AWS_REGIONS : [];
       }
       for (const region of regions) jobs.push({ result, region, service });
       result.queriedRegions.push(...regions);
@@ -735,8 +740,11 @@ async function listAllInstances({ concurrency = 6, requestTimeoutMs = 12000, tim
     for (const result of results) {
       result.queriedRegions = [...enabledRegions];
       for (const region of enabledRegions) {
-        jobs.push({ result, region, service: 'ec2' });
-        if (LIGHTSAIL_REGIONS.has(region)) jobs.push({ result, region, service: 'lightsail' });
+        if (result.queryServices.includes('ec2')) jobs.push({ result, region, service: 'ec2' });
+        if (result.queryServices.includes('lightsail')) {
+          if (LIGHTSAIL_REGIONS.has(region)) jobs.push({ result, region, service: 'lightsail' });
+          else result.errors.push({ region, service: 'lightsail', code: 'UnsupportedRegion', message: '此区域不在 Lightsail 支持列表中，请调整筛选或改用自动发现' });
+        }
       }
     }
   }

@@ -69,6 +69,9 @@ test('upgrade creates the missing AWS table and repeated migrations preserve acc
 
 test('migration accepts the manually created production schema without changing data', t => {
   const { db, sqlite } = database(t);
+  addAccount(db);
+  const legacy = sqlite.prepare('SELECT * FROM aws_accounts').get();
+  delete legacy.query_services;
   sqlite.exec(`DROP TABLE aws_accounts;
     CREATE TABLE aws_accounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
@@ -77,10 +80,12 @@ test('migration accepts the manually created production schema without changing 
       socks5_port INTEGER DEFAULT 1080, socks5_user TEXT, socks5_pass TEXT,
       enabled INTEGER DEFAULT 1, updated_at TEXT DEFAULT (datetime('now'))
     )`);
-  addAccount(db);
+  const keys = Object.keys(legacy);
+  sqlite.prepare(`INSERT INTO aws_accounts (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`).run(...Object.values(legacy));
   const before = sqlite.prepare('SELECT * FROM aws_accounts').all();
   migrate(sqlite);
-  assert.deepEqual(sqlite.prepare('SELECT * FROM aws_accounts').all(), before);
+  assert.deepEqual(sqlite.prepare(`SELECT ${keys.join(',')} FROM aws_accounts`).all(), before);
+  assert.deepEqual(JSON.parse(db.getAwsAccounts()[0].query_services), ['ec2', 'lightsail']);
   assert.equal(db.getAwsAccounts()[0].socks5_pass, 'fake-proxy-password');
 });
 
@@ -190,6 +195,55 @@ test('empty region directories do not invent an account home region or start a f
   assert.equal(result.queriedRegions.length, 0);
   assert.equal(result.discoveredRegions.length, 0);
   assert.equal(h.calls.length, 2);
+});
+
+test('Lightsail directory rejection makes one Lightsail request and preserves EC2 discovery', async () => {
+  const h = serviceHarness({ discover: async ({ service }) => {
+    if (service === 'lightsail') throw Object.assign(new Error('fake-secret'), { name: 'AccessDeniedException' });
+    return { Regions: [{ RegionName: 'ap-northeast-1' }, { RegionName: 'ap-southeast-1' }] };
+  }, send: async ({ region }) => ({ Reservations: [{ Instances: [{ InstanceId: 'i-' + region, PublicIpAddress: '192.0.2.1' }] }] }) });
+  const [result] = await h.aws.listAllInstances();
+  assert.equal(result.instances.length, 2);
+  assert.equal(result.status, 'partial');
+  assert.equal(result.errors.length, 1);
+  assert.equal(result.errors[0].operation, 'GetRegions');
+  assert.equal(h.calls.filter(c => c.service === 'lightsail').length, 1);
+  assert.match(result.errors[0].message, /自动扫描已停止/);
+  assert.ok(!JSON.stringify(result).includes('fake-secret'));
+});
+
+for (const selected of ['ec2', 'lightsail']) {
+  test(`${selected}-only accounts never request the other service in automatic or manual mode`, async () => {
+    for (const saved of [null, '["ap-southeast-1"]']) {
+      const h = serviceHarness({ saved, accounts: [{ id: 1, enabled: 1, access_key: 'fake', query_services: JSON.stringify([selected]) }] });
+      const [result] = await h.aws.listAllInstances();
+      assert.ok(h.calls.length > 0);
+      assert.ok(h.calls.every(c => c.service === selected));
+      assert.deepEqual(Array.from(result.queryServices), [selected]);
+      assert.equal(result.status, 'ok');
+    }
+  });
+}
+
+test('manual Lightsail queries remain available when GetRegions is denied', async () => {
+  const h = serviceHarness({ saved: '["ap-southeast-1"]',
+    accounts: [{ id: 1, enabled: 1, query_services: '["lightsail"]' }],
+    discover: async () => { throw new Error('must not request the region directory'); },
+    send: async () => ({ instances: [{ name: 'ls-allowed', state: { name: 'running' } }] })
+  });
+  const [result] = await h.aws.listAllInstances();
+  assert.equal(result.status, 'ok');
+  assert.equal(result.instances[0].instanceId, 'ls-allowed');
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].discovery, false);
+});
+
+test('Lightsail-only selection of an unsupported region is not reported as a successful empty query', async () => {
+  const h = serviceHarness({ saved: '["us-west-1"]', accounts: [{ id: 1, enabled: 1, query_services: '["lightsail"]' }] });
+  const [result] = await h.aws.listAllInstances();
+  assert.equal(h.calls.length, 0);
+  assert.equal(result.status, 'error');
+  assert.equal(result.errors[0].code, 'UnsupportedRegion');
 });
 
 test('automatic region enumeration is included in the refresh timeout budget', async () => {
@@ -314,6 +368,32 @@ test('HTTP region settings and discovery agree for automatic, empty, explicit an
   assert.equal((await request('/aws/regions', 'POST', { regions: ['invalid'] })).status, 400);
 });
 
+test('HTTP query service settings persist, survive migrations, and immediately change scan scope', async t => {
+  const { db, sqlite } = database(t);
+  const h = serviceHarness({ db });
+  const request = await routes(t, db, h.aws);
+  const body = { name: 'services', accessKey: 'fake', secretKey: 'fake', queryServices: ['ec2'] };
+  assert.equal((await request('/aws/config', 'POST', body)).status, 200);
+  const account = db.getAwsAccounts()[0];
+  assert.deepEqual((await request('/aws/config')).data.accounts[0].queryServices, ['ec2']);
+  await request('/aws/all-instances');
+  assert.ok(h.calls.every(c => c.service === 'ec2'));
+  const ciphertext = sqlite.prepare('SELECT secret_key FROM aws_accounts WHERE id = ?').get(account.id).secret_key;
+  assert.equal((await request(`/aws/config/${account.id}`, 'PUT', { queryServices: ['lightsail'] })).status, 200);
+  h.calls.length = 0;
+  await request('/aws/all-instances');
+  assert.ok(h.calls.length > 0 && h.calls.every(c => c.service === 'lightsail'));
+  migrate(sqlite);
+  assert.equal(sqlite.prepare('SELECT secret_key FROM aws_accounts WHERE id = ?').get(account.id).secret_key, ciphertext);
+  assert.deepEqual(JSON.parse(db.getAwsAccountById(account.id).query_services), ['lightsail']);
+  for (const invalid of [[], null, 'ec2', ['s3'], ['ec2', 'unknown']]) {
+    assert.equal((await request('/aws/config', 'POST', { ...body, queryServices: invalid })).status, 400);
+    assert.equal((await request(`/aws/config/${account.id}`, 'PUT', { queryServices: invalid })).status, 400);
+  }
+  assert.equal(db.getAwsAccounts().length, 1);
+  assert.deepEqual(JSON.parse(db.getAwsAccountById(account.id).query_services), ['lightsail']);
+});
+
 test('account/region changes invalidate cached results and partial failures never revive a successful cache', async t => {
   const { db } = database(t);
   const id = addAccount(db);
@@ -415,14 +495,19 @@ test('browser adds an account without a region and automatically refreshes; edit
   assert.equal(h.context._awsAccounts[0].id, 1);
   assert.match(h.element('aws-accounts').innerHTML, /自动发现实例区域/);
   h.element('aws-name').value = 'test'; h.element('aws-ak').value = 'fake'; h.element('aws-sk').value = 'fake';
+  h.element('aws-query-services').value = 'ec2';
   await h.context.saveAwsConfig();
   assert.equal(Object.hasOwn(h.requests.find(r => r.method === 'POST').body, 'defaultRegion'), false);
+  assert.deepEqual(h.requests.find(r => r.method === 'POST').body.queryServices, ['ec2']);
   assert.ok(h.requests.some(r => r.url.includes('/all-instances')));
   h.context.editAwsAccount(1);
+  assert.equal(h.element('edit-aws-query-services').value, 'both');
+  h.element('edit-aws-query-services').value = 'lightsail';
   h.element('edit-aws-name').value = 'updated';
   await h.context.saveAwsEdit();
   const edit = h.requests.find(r => r.method === 'PUT').body;
   assert.equal(edit.name, 'updated');
+  assert.deepEqual(edit.queryServices, ['lightsail']);
   assert.equal(Object.hasOwn(edit, 'defaultRegion'), false);
   assert.equal(Object.hasOwn(edit, 'socks5Url'), false);
 });
@@ -439,6 +524,22 @@ test('browser shows failed/partial/skipped scans accurately and escapes AWS erro
   }
   h.context.renderInstances([{ accountId: 1, accountName: 'test', instances: [], errors: [], status: 'skipped' }], container);
   assert.match(container.innerHTML, /未选择查询区域/);
+});
+
+test('browser collapses and groups duplicate service errors without hiding working instances', async () => {
+  const h = browserHarness(); await h.ready();
+  const account = { accountId: 1, accountName: 'test', status: 'partial', instances: [
+    { instanceId: 'i-visible', accountId: 1, instanceType: 'ec2', name: 'Visible EC2', region: 'ap-southeast-1' }
+  ], errors: ['ap-northeast-1', 'ap-southeast-1'].map(region => ({ region, service: 'lightsail', code: 'AccessDeniedException', message: 'test failure' })) };
+  const container = h.element('aws-instances-container');
+  h.context.renderInstances([account], container);
+  assert.match(container.innerHTML, /已显示 1 个实例；Lightsail 查询未完成/);
+  assert.match(container.innerHTML, /<details /);
+  assert.ok(!/<details[^>]*\bopen\b/.test(container.innerHTML));
+  assert.equal((container.innerHTML.match(/AccessDeniedException/g) || []).length, 1);
+  assert.match(container.innerHTML, /Visible EC2/);
+  assert.match(container.innerHTML, /ap-northeast-1, ap-southeast-1/);
+  assert.match(container.innerHTML, /编辑此账号的查询服务/);
 });
 
 test('browser caches successful scans only and ignores responses from before a configuration change', async () => {

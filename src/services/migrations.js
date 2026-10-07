@@ -45,8 +45,13 @@ function runMigrations(db) {
     socks5_user TEXT,
     socks5_pass TEXT,
     enabled INTEGER DEFAULT 1,
+    query_services TEXT NOT NULL DEFAULT '["ec2","lightsail"]',
     updated_at TEXT DEFAULT (datetime('now'))
   )`);
+  const awsCols = db.prepare('PRAGMA table_info(aws_accounts)').all().map(c => c.name);
+  if (!awsCols.includes('query_services')) {
+    db.exec(`ALTER TABLE aws_accounts ADD COLUMN query_services TEXT NOT NULL DEFAULT '["ec2","lightsail"]'`);
+  }
 
   // ─── nodes 表迁移 ───
   const cols = db.prepare("PRAGMA table_info(nodes)").all().map(c => c.name);

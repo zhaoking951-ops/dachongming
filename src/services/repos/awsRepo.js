@@ -1,5 +1,6 @@
 const { encrypt, decrypt } = require('../../utils/crypto');
 const { toSqlUtc } = require('../../utils/time');
+const { getQueryServices } = require('../../utils/awsServices');
 
 let _getDb;
 
@@ -28,8 +29,8 @@ function getAwsAccountById(id) {
 
 function addAwsAccount(account) {
   return _getDb().prepare(`
-    INSERT INTO aws_accounts (name, access_key, secret_key, default_region, socks5_host, socks5_port, socks5_user, socks5_pass, enabled, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO aws_accounts (name, access_key, secret_key, default_region, socks5_host, socks5_port, socks5_user, socks5_pass, enabled, query_services, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(
     account.name,
     encrypt(account.access_key),
@@ -39,7 +40,8 @@ function addAwsAccount(account) {
     account.socks5_port || 1080,
     account.socks5_user || null,
     account.socks5_pass ? encrypt(account.socks5_pass) : null,
-    account.enabled === false ? 0 : 1
+    account.enabled === false ? 0 : 1,
+    JSON.stringify(getQueryServices(account))
   );
 }
 
@@ -48,7 +50,7 @@ function updateAwsAccount(id, fields) {
   if (safe.access_key !== undefined) safe.access_key = safe.access_key ? encrypt(safe.access_key) : null;
   if (safe.secret_key !== undefined) safe.secret_key = safe.secret_key ? encrypt(safe.secret_key) : null;
   if (safe.socks5_pass !== undefined) safe.socks5_pass = safe.socks5_pass ? encrypt(safe.socks5_pass) : null;
-  const allowed = ['name','access_key','secret_key','default_region','socks5_host','socks5_port','socks5_user','socks5_pass','enabled'];
+  const allowed = ['name','access_key','secret_key','default_region','socks5_host','socks5_port','socks5_user','socks5_pass','enabled','query_services'];
   const obj = Object.fromEntries(Object.entries(safe).filter(([k]) => allowed.includes(k)));
   obj.updated_at = toSqlUtc();
   const keys = Object.keys(obj);

@@ -802,6 +802,15 @@
         <input type="password" id="aws-sk" placeholder="xxxxxxxx" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
       </div>
       <div class="col-span-2">
+        <label for="aws-query-services" class="text-gray-500 text-xs block mb-1">查询服务</label>
+        <select id="aws-query-services" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+          <option value="both">EC2 和 Lightsail</option>
+          <option value="ec2">仅 EC2</option>
+          <option value="lightsail">仅 Lightsail</option>
+        </select>
+        <p class="text-gray-500 text-xs mt-1">只使用 EC2 时可选「仅 EC2」，不会查询 Lightsail；区域仍自动发现。</p>
+      </div>
+      <div class="col-span-2">
         <label class="text-gray-500 text-xs block mb-1">SOCKS5 代理 (可选)</label>
         <div class="flex gap-2">
           <input type="text" id="aws-socks-url" placeholder="socks5://user:pass@host:port" class="flex-1 bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
@@ -862,6 +871,15 @@
             <label class="text-gray-500 text-xs block mb-1">Secret Key</label>
             <input type="text" id="edit-aws-sk" readonly value="******** (已保存)" class="w-full bg-black/20 text-gray-400 px-3 py-2 rounded-xl border border-white/10 text-sm">
           </div>
+        </div>
+        <div>
+          <label for="edit-aws-query-services" class="text-gray-500 text-xs block mb-1">查询服务</label>
+          <select id="edit-aws-query-services" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+            <option value="both">EC2 和 Lightsail</option>
+            <option value="ec2">仅 EC2</option>
+            <option value="lightsail">仅 Lightsail</option>
+          </select>
+          <p class="text-gray-500 text-xs mt-1">只使用 EC2 时可选「仅 EC2」，不会查询 Lightsail；区域仍自动发现。</p>
         </div>
         <div>
           <label class="text-gray-500 text-xs block mb-1">SOCKS5 URL</label>

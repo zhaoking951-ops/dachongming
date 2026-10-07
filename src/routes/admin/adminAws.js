@@ -6,6 +6,7 @@ const { notify } = require('../../services/notify');
 const logger = require('../../services/logger');
 const { parseIntId } = require('../../utils/validators');
 const { asyncHandler } = require('../../utils/asyncHandler');
+const { AWS_QUERY_SERVICES, isValidQueryServices, getQueryServices } = require('../../utils/awsServices');
 
 const router = express.Router();
 
@@ -46,23 +47,25 @@ router.get('/aws/config', (req, res) => {
       id: a.id, name: a.name, defaultRegion: a.default_region,
       socks5_host: a.socks5_host, socks5_port: a.socks5_port,
       enabled: !!a.enabled,
+      queryServices: getQueryServices(a),
       accessKeyMasked: a.access_key ? a.access_key.substring(0, 4) + '***' + a.access_key.slice(-4) : ''
     }))
   });
 });
 
 router.post('/aws/config', (req, res) => {
-  const { name, accessKey, secretKey, socks5Url, defaultRegion = 'us-east-1' } = req.body || {};
+  const { name, accessKey, secretKey, socks5Url, defaultRegion = 'us-east-1', queryServices = AWS_QUERY_SERVICES } = req.body || {};
   if (!name || !accessKey || !secretKey) {
     return res.status(400).json({ error: '请填写账号名、Access Key、Secret Key' });
   }
   if (!validateRegion(defaultRegion)) return res.status(400).json({ error: '请选择有效的 AWS 默认区域' });
+  if (!isValidQueryServices(queryServices)) return res.status(400).json({ error: '查询服务至少选择 EC2 或 Lightsail 中的一项' });
   let socks = { host: null, port: 1080, user: null, pass: null };
   try { socks = parseSocks5Url(socks5Url); } catch (e) {
     return res.status(400).json({ error: `SOCKS5 URL 格式错误: ${e.message}` });
   }
   aws.setAwsConfig({
-    name, accessKey, secretKey, defaultRegion,
+    name, accessKey, secretKey, defaultRegion, queryServices,
     socks5Host: socks.host, socks5Port: socks.port, socks5User: socks.user, socks5Pass: socks.pass
   });
   invalidateAwsInstances();
@@ -75,8 +78,12 @@ router.put('/aws/config/:id', (req, res) => {
   if (!id) return res.status(400).json({ error: '参数错误' });
   const current = db.getAwsAccountById(id);
   if (!current) return res.status(404).json({ error: '账号不存在' });
-  const { name, socks5Url, defaultRegion } = req.body || {};
+  const { name, socks5Url, defaultRegion, queryServices } = req.body || {};
   const updates = { name: name || current.name };
+  if (queryServices !== undefined) {
+    if (!isValidQueryServices(queryServices)) return res.status(400).json({ error: '查询服务至少选择 EC2 或 Lightsail 中的一项' });
+    updates.query_services = JSON.stringify(AWS_QUERY_SERVICES.filter(service => queryServices.includes(service)));
+  }
   if (defaultRegion !== undefined) {
     if (!validateRegion(defaultRegion)) return res.status(400).json({ error: '请选择有效的 AWS 默认区域' });
     updates.default_region = defaultRegion;
