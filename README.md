@@ -42,7 +42,7 @@
 ### 一键脚本（推荐）
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/vzzoxo/xiaoyizi/main/install.sh)
+REPO_URL=https://github.com/zhaoking951-ops/xiaoyizi.git bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/xiaoyizi/main/install.sh)
 ```
 
 脚本会自动完成：系统依赖 → Node.js 22 → PM2 → 拉取代码 → 配置 .env → Nginx + Let's Encrypt SSL → PM2 启动 → 健康检查。
@@ -51,18 +51,18 @@ bash <(curl -sL https://raw.githubusercontent.com/vzzoxo/xiaoyizi/main/install.s
 
 首个注册的用户自动成为管理员。
 
-使用自己的 Fork 新安装时，显式指定仓库（将 `YOUR_ACCOUNT` 替换为你的 GitHub 账号）：
+上面的命令会从 `zhaoking951-ops/xiaoyizi` 下载安装脚本，并在新安装时拉取该仓库的代码。如果你将本项目 Fork 到其他 GitHub 账号，需同时替换两个地址（将 `YOUR_ACCOUNT` 替换为对应账号）：
 
 ```bash
 REPO_URL=https://github.com/YOUR_ACCOUNT/xiaoyizi.git bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_ACCOUNT/xiaoyizi/main/install.sh)
 ```
 
-已有安装更新时保留当前 `origin`，不会根据 `REPO_URL` 切回上游。首次从上游切换到 Fork 时，先备份 `.env`、`data/`、`backups/` 和节点配置，再用 `git remote set-url origin <你的 Fork 地址>` 设置更新来源。
+已有安装更新时保留当前 `origin`，不会根据 `REPO_URL` 自动改变仓库地址。首次从上游切换到本 Fork 时，先备份 `.env`、`data/`、`backups/` 和节点配置，再在安装目录中运行 `git remote set-url origin https://github.com/zhaoking951-ops/xiaoyizi.git` 设置更新来源。
 
 ### 手动部署
 
 ```bash
-git clone https://github.com/vzzoxo/xiaoyizi.git
+git clone https://github.com/zhaoking951-ops/xiaoyizi.git
 cd xiaoyizi
 npm install --omit=dev
 cp .env.example .env

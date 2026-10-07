@@ -16,7 +16,7 @@
 ## 安装
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/vzzoxo/xiaoyizi/main/install.sh)
+REPO_URL=https://github.com/zhaoking951-ops/xiaoyizi.git bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/xiaoyizi/main/install.sh)
 ```
 
 ## 文档
