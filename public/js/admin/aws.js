@@ -2,16 +2,6 @@
 
 window._awsAccounts = [];
 
-function fillAwsRegionSelects(data) {
-  for (const id of ['aws-default-region', 'edit-aws-default-region']) {
-    const select = document.getElementById(id);
-    const selected = select.value || 'us-east-1';
-    select.innerHTML = data.all.map(region => '<option value="' + escapeHtml(region) + '">' +
-      escapeHtml((data.meta[region]?.name || region) + ' · ' + region) + '</option>').join('');
-    select.value = selected;
-  }
-}
-
 function invalidateAwsInstancesCache() {
   _awsInstancesRevision += 1;
   try { localStorage.removeItem(AWS_CACHE_KEY); } catch (_) {}
@@ -40,7 +30,7 @@ async function loadAwsConfig() {
   list.innerHTML = (cfg.accounts || []).map(a =>
     '<div class="flex items-center justify-between rounded-xl bg-black/20 border border-white/5 px-3 py-2.5">' +
     '<div class="min-w-0"><div class="text-xs text-white font-medium truncate">#' + escapeHtml(a.id) + ' ' + escapeHtml(a.name) + '</div>' +
-    '<div class="text-[11px] text-gray-500 mt-0.5 truncate">' + escapeHtml(a.accessKeyMasked) + ' · ' + escapeHtml(a.defaultRegion || 'us-east-1') + (a.socks5_host ? ' · SOCKS ' + escapeHtml(a.socks5_host) + ':' + escapeHtml(a.socks5_port) : '') + '</div></div>' +
+    '<div class="text-[11px] text-gray-500 mt-0.5 truncate">' + escapeHtml(a.accessKeyMasked) + ' · 自动发现实例区域' + (a.socks5_host ? ' · SOCKS ' + escapeHtml(a.socks5_host) + ':' + escapeHtml(a.socks5_port) : '') + '</div></div>' +
     '<div class="flex items-center gap-2">' +
     '<button type="button" data-action="edit-aws-account" data-aws-id="' + parseInt(a.id) + '" class="text-gray-300 hover:text-white text-xs px-2 py-1 rounded-lg bg-white/5 border border-white/10">编辑</button>' +
     '<button type="button" data-action="delete-aws-account" data-aws-id="' + parseInt(a.id) + '" class="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded-lg bg-red-500/10 border border-red-500/20">删除</button>' +
@@ -64,7 +54,6 @@ async function loadAwsConfig() {
 
 async function saveAwsConfig() {
   const name = document.getElementById('aws-name').value.trim();
-  const defaultRegion = document.getElementById('aws-default-region').value;
   const ak = document.getElementById('aws-ak').value.trim();
   const sk = document.getElementById('aws-sk').value.trim();
   const socks5Url = document.getElementById('aws-socks-url').value.trim();
@@ -74,14 +63,15 @@ async function saveAwsConfig() {
 
   const res = await fetch('/admin/api/aws/config', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window._csrf || '' },
-    body: JSON.stringify({ name, accessKey: ak, secretKey: sk, socks5Url, defaultRegion })
+    body: JSON.stringify({ name, accessKey: ak, secretKey: sk, socks5Url })
   });
   if (res.ok) {
     invalidateAwsInstancesCache();
-    showToast('✅ AWS 账号已新增');
+    showToast('✅ AWS 账号已新增，正在查询实例');
     ['aws-name', 'aws-ak', 'aws-sk', 'aws-socks-url'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('aws-socks-test-result').textContent = '';
-    loadAwsConfig();
+    await loadAwsConfig();
+    await loadAllInstances(true);
   } else {
     const d = await res.json().catch(() => ({}));
     showToast('❌ ' + (d.error || '保存失败'));
@@ -123,7 +113,6 @@ function editAwsAccount(id) {
   if (!a) { showToast('账号不存在'); return; }
   document.getElementById('edit-aws-id').value = id;
   document.getElementById('edit-aws-name').value = a.name || '';
-  document.getElementById('edit-aws-default-region').value = a.defaultRegion || 'us-east-1';
   document.getElementById('edit-aws-ak').value = a.accessKeyMasked || '';
   document.getElementById('edit-aws-socks').value = a.socks5_host ? 'socks5://' + a.socks5_host + ':' + (a.socks5_port || 1080) : '';
   document.getElementById('edit-aws-socks').dataset.originalValue = document.getElementById('edit-aws-socks').value;
@@ -138,7 +127,6 @@ function closeAwsEditModal() {
 async function saveAwsEdit() {
   const id = parseInt(document.getElementById('edit-aws-id').value);
   const name = document.getElementById('edit-aws-name').value.trim();
-  const defaultRegion = document.getElementById('edit-aws-default-region').value;
   const socksInput = document.getElementById('edit-aws-socks');
   // 显示值不含已保存的代理密码。只在用户改动时提交，避免编辑区域时清除代理认证。
   const socks5Url = socksInput.value.trim() === socksInput.dataset.originalValue ? undefined : socksInput.value.trim();
@@ -146,7 +134,7 @@ async function saveAwsEdit() {
   if (!name) { showToast('账号名不能为空'); return; }
   const res = await fetch('/admin/api/aws/config/' + id, {
     method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window._csrf || '' },
-    body: JSON.stringify({ name, socks5Url, defaultRegion })
+    body: JSON.stringify({ name, socks5Url })
   });
   const d = await res.json().catch(() => ({}));
   if (res.ok) { invalidateAwsInstancesCache(); showToast('✅ 账号已更新'); closeAwsEditModal(); loadAwsConfig(); }
@@ -192,7 +180,7 @@ async function swapNodeIp(nodeId, nodeName, btn) {
   done();
 }
 
-const AWS_CACHE_KEY = 'aws_instances_cache_v2';
+const AWS_CACHE_KEY = 'aws_instances_cache_v3';
 let _awsInstancesRevision = 0;
 const AWS_CACHE_TTL = 30 * 60 * 1000; // 30 分钟
 
@@ -213,7 +201,7 @@ async function loadAllInstances(force) {
     } catch (e) { console.warn('AWS cache read failed:', e); }
   }
 
-  loading.textContent = '⏳ 正在查询实例...';
+  loading.textContent = '⏳ 正在发现并查询实例，首次查询可能需要几十秒...';
   loading.classList.remove('hidden');
   container.classList.add('hidden');
   try {
@@ -252,16 +240,20 @@ function renderInstances(accounts, container) {
       html += '<div class="mb-5">' +
         '<div class="text-sm text-gray-400 mb-3 px-1">📦 ' + escapeHtml(acc.accountName) + ' <span class="text-gray-600">#' + escapeHtml(acc.accountId) + '</span></div>';
 
+      if (acc.discoveredRegions?.length) {
+        html += '<p class="text-xs text-gray-400 mb-3">发现实例区域：' + escapeHtml(acc.discoveredRegions.join(', ')) + '</p>';
+      }
       const errors = acc.errors || [];
       if (errors.length) {
         html += '<div class="text-xs text-red-400 mb-3 px-3 py-2 rounded-xl bg-red-500/10">' +
           (acc.status === 'error' ? '查询失败，无法确认是否有实例' : '部分查询失败，以下结果可能不完整') +
           '<ul class="mt-1">' + errors.map(e => '<li>' + escapeHtml(e.region) + ' · ' +
-            escapeHtml(e.service.toUpperCase()) + ' · ' + escapeHtml(e.code) + '：' + escapeHtml(e.message) + '</li>').join('') + '</ul></div>';
+            escapeHtml(e.service.toUpperCase()) + ' · ' + escapeHtml(e.operation ? e.operation + ' / ' + e.code : e.code) + '：' + escapeHtml(e.message) + '</li>').join('') + '</ul></div>';
       } else if (acc.instances.length === 0) {
         html += '<p class="text-gray-500 text-xs mb-3">' + (acc.status === 'skipped'
           ? '未选择查询区域，请调整区域筛选后刷新'
-          : '所选区域暂无实例：' + escapeHtml((acc.queriedRegions || []).join(', '))) + '</p>';
+          : acc.autoDiscover && !acc.queriedRegions?.length ? 'AWS 未返回可查询区域'
+          : (acc.autoDiscover ? '已查询区域未发现实例：' : '所选区域暂无实例：') + escapeHtml((acc.queriedRegions || []).join(', '))) + '</p>';
       }
 
       const byRegion = {};
@@ -368,7 +360,6 @@ async function loadAwsRegions() {
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || '区域加载失败');
     _awsRegionsData = d;
-    fillAwsRegionSelects(d);
     renderAwsRegions(d);
   } catch (e) {
     container.innerHTML = '<span class="text-red-400">加载失败</span>';
@@ -377,7 +368,7 @@ async function loadAwsRegions() {
 function renderAwsRegions(d) {
   const container = document.getElementById('aws-regions-list');
   const enabledSet = new Set(d.enabled);
-  document.getElementById('aws-regions-default').checked = d.useAccountDefaults;
+  document.getElementById('aws-regions-auto').checked = d.autoDiscover;
   // 按分组组织
   const groups = {};
   for (const region of d.all) {
@@ -423,25 +414,25 @@ function updateAwsRegionsCount() {
   const all = document.querySelectorAll('.js-aws-region-toggle');
   const checked = document.querySelectorAll('.js-aws-region-toggle:checked');
   const btnSave = document.getElementById('btn-aws-regions-save');
-  const useDefaults = document.getElementById('aws-regions-default').checked;
-  all.forEach(c => { c.disabled = useDefaults; });
-  if (btnSave) btnSave.textContent = useDefaults ? '保存（账号默认区域）' : `保存 (${checked.length}/${all.length})`;
+  const autoDiscover = document.getElementById('aws-regions-auto').checked;
+  all.forEach(c => { c.disabled = autoDiscover; });
+  if (btnSave) btnSave.textContent = autoDiscover ? '保存（自动发现）' : `保存 (${checked.length}/${all.length})`;
 }
 document.addEventListener('change', (e) => {
-  if (e.target?.classList?.contains('js-aws-region-toggle') || e.target?.id === 'aws-regions-default') updateAwsRegionsCount();
+  if (e.target?.classList?.contains('js-aws-region-toggle') || e.target?.id === 'aws-regions-auto') updateAwsRegionsCount();
 });
 document.getElementById('btn-aws-regions-all')?.addEventListener('click', () => {
-  document.getElementById('aws-regions-default').checked = false;
+  document.getElementById('aws-regions-auto').checked = false;
   document.querySelectorAll('.js-aws-region-toggle').forEach(c => { c.checked = true; });
   updateAwsRegionsCount();
 });
 document.getElementById('btn-aws-regions-none')?.addEventListener('click', () => {
-  document.getElementById('aws-regions-default').checked = false;
+  document.getElementById('aws-regions-auto').checked = false;
   document.querySelectorAll('.js-aws-region-toggle').forEach(c => { c.checked = false; });
   updateAwsRegionsCount();
 });
 document.getElementById('btn-aws-regions-save')?.addEventListener('click', async () => {
-  const regions = document.getElementById('aws-regions-default').checked ? null
+  const regions = document.getElementById('aws-regions-auto').checked ? null
     : Array.from(document.querySelectorAll('.js-aws-region-toggle:checked')).map(c => c.dataset.region);
   const btn = document.getElementById('btn-aws-regions-save');
   btn.disabled = true;
@@ -454,7 +445,7 @@ document.getElementById('btn-aws-regions-save')?.addEventListener('click', async
     const d = await res.json();
     if (d.ok) {
       invalidateAwsInstancesCache();
-      showToast(d.useAccountDefaults ? '✅ 已改为查询各账号默认区域' : `✅ 已保存 ${d.count} 个启用区域`);
+      showToast(d.autoDiscover ? '✅ 已改为自动发现实例区域' : `✅ 已保存 ${d.count} 个启用区域`);
     }
     else showToast('❌ ' + (d.error || '保存失败'));
   } catch { showToast('❌ 网络错误'); }

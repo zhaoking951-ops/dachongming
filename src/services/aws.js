@@ -1,5 +1,5 @@
-const { EC2Client, DescribeInstancesCommand, AllocateAddressCommand, AssociateAddressCommand, DisassociateAddressCommand, ReleaseAddressCommand, DescribeAddressesCommand, RunInstancesCommand, TerminateInstancesCommand, StartInstancesCommand, StopInstancesCommand, DescribeImagesCommand, CreateTagsCommand } = require('@aws-sdk/client-ec2');
-const { LightsailClient, GetInstancesCommand, GetStaticIpsCommand, AllocateStaticIpCommand, AttachStaticIpCommand, DetachStaticIpCommand, ReleaseStaticIpCommand, CreateInstancesCommand, DeleteInstanceCommand, StartInstanceCommand, StopInstanceCommand } = require('@aws-sdk/client-lightsail');
+const { EC2Client, DescribeRegionsCommand, DescribeInstancesCommand, AllocateAddressCommand, AssociateAddressCommand, DisassociateAddressCommand, ReleaseAddressCommand, DescribeAddressesCommand, RunInstancesCommand, TerminateInstancesCommand, StartInstancesCommand, StopInstancesCommand, DescribeImagesCommand, CreateTagsCommand } = require('@aws-sdk/client-ec2');
+const { LightsailClient, GetRegionsCommand, GetInstancesCommand, GetStaticIpsCommand, AllocateStaticIpCommand, AttachStaticIpCommand, DetachStaticIpCommand, ReleaseStaticIpCommand, CreateInstancesCommand, DeleteInstanceCommand, StartInstanceCommand, StopInstanceCommand } = require('@aws-sdk/client-lightsail');
 const { NodeHttpHandler } = require('@smithy/node-http-handler');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const db = require('./database');
@@ -632,12 +632,12 @@ async function tagInstance(instanceId, tags, type, region, accountId) {
 
 // ========== 获取所有账号的所有实例 ==========
 
-// null = 按账号默认区域；[] = 明确不查询；非空数组 = 严格按用户选择。
+// null = 自动发现账号中的实例区域；[] = 明确不查询；非空数组 = 手动筛选。
 function getEnabledRegions() {
   try {
     const parsed = JSON.parse(db.getSetting('aws_enabled_regions') || 'null');
     if (Array.isArray(parsed)) return [...new Set(parsed.filter(r => ALL_AWS_REGIONS.includes(r)))];
-  } catch (_) { /* 损坏配置回退到账号区域，不进行全区扫描 */ }
+  } catch (_) { /* 损坏配置回退到自动发现 */ }
   return null;
 }
 
@@ -672,6 +672,34 @@ function describeScanError(err) {
   return { code, message };
 }
 
+// 这是查询区域目录的引导端点，不代表账号或实例位于美国。
+const AWS_DISCOVERY_ENDPOINT_REGION = 'us-east-1';
+
+async function discoverAwsRegions(service, accountId, options) {
+  const client = service === 'ec2' ? getEC2Client(AWS_DISCOVERY_ENDPOINT_REGION, accountId)
+    : getLightsailClient(AWS_DISCOVERY_ENDPOINT_REGION, accountId);
+  try {
+    const response = await client.send(service === 'ec2'
+      ? new DescribeRegionsCommand({ AllRegions: false })
+      : new GetRegionsCommand({ includeAvailabilityZones: false }), options);
+    const regions = service === 'ec2'
+      ? (response.Regions || []).filter(r => r.OptInStatus !== 'not-opted-in').map(r => r.RegionName)
+      : (response.regions || []).map(r => r.name);
+    // 接受 AWS 返回的新区域，不依赖项目内的静态区域表是否已更新。
+    return [...new Set(regions.filter(r => typeof r === 'string' && /^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(r)))].sort();
+  } finally {
+    client.destroy();
+  }
+}
+
+async function runScanJobs(jobs, concurrency, run) {
+  let index = 0;
+  async function worker() {
+    while (index < jobs.length) await run(jobs[index++]);
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, worker));
+}
+
 async function listAllInstances({ concurrency = 6, requestTimeoutMs = 12000, timeoutMs = 45000 } = {}) {
   const accounts = db.getAwsAccounts(true);
   const nodeMap = new Map();
@@ -681,17 +709,38 @@ async function listAllInstances({ concurrency = 6, requestTimeoutMs = 12000, tim
   const enabledRegions = getEnabledRegions();
   const results = accounts.map(account => ({
     accountId: account.id, accountName: account.name, instances: [], errors: [],
-    queriedRegions: enabledRegions === null ? [account.default_region || 'us-east-1'] : [...enabledRegions],
-    status: 'ok'
+    queriedRegions: [], discoveredRegions: [], autoDiscover: enabledRegions === null, status: 'ok'
   }));
   const jobs = [];
-  for (const result of results) {
-    for (const region of result.queriedRegions) {
-      jobs.push({ result, region, service: 'ec2' });
-      if (LIGHTSAIL_REGIONS.has(region)) jobs.push({ result, region, service: 'lightsail' });
+  const deadline = Date.now() + timeoutMs;
+  if (enabledRegions === null) {
+    // 分别发现 EC2 与 Lightsail 区域；某个服务无权限不会阻止另一个服务。
+    const discoveryJobs = results.flatMap(result => ['ec2', 'lightsail'].map(service => ({ result, service })));
+    await runScanJobs(discoveryJobs, concurrency, async ({ result, service }) => {
+      let regions;
+      try {
+        regions = await withScanTimeout(options => discoverAwsRegions(service, result.accountId, options),
+          Math.min(requestTimeoutMs, deadline - Date.now()));
+      } catch (err) {
+        // 某些 IAM 策略允许查实例但不允许列区域；保留已知区域回退，并明确提示不完整。
+        const detail = describeScanError(err);
+        result.errors.push({ region: '区域发现', service, operation: service === 'ec2' ? 'DescribeRegions' : 'GetRegions',
+          ...detail, message: detail.message + '；区域列表读取失败，已尝试已知区域' });
+        regions = service === 'ec2' ? ALL_AWS_REGIONS : [...LIGHTSAIL_REGIONS];
+      }
+      for (const region of regions) jobs.push({ result, region, service });
+      result.queriedRegions.push(...regions);
+    });
+  } else {
+    for (const result of results) {
+      result.queriedRegions = [...enabledRegions];
+      for (const region of enabledRegions) {
+        jobs.push({ result, region, service: 'ec2' });
+        if (LIGHTSAIL_REGIONS.has(region)) jobs.push({ result, region, service: 'lightsail' });
+      }
     }
   }
-  const deadline = Date.now() + timeoutMs;
+  for (const result of results) result.queriedRegions = [...new Set(result.queriedRegions)].sort();
   const successes = new Map();
   let nextJob = 0;
   async function worker() {
@@ -724,8 +773,9 @@ async function listAllInstances({ concurrency = 6, requestTimeoutMs = 12000, tim
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, worker));
   for (const result of results) {
-    result.status = !result.queriedRegions.length ? 'skipped'
-      : result.errors.length ? (successes.get(result.accountId) ? 'partial' : 'error') : 'ok';
+    result.discoveredRegions = [...new Set(result.instances.map(i => i.region))].sort();
+    result.status = result.errors.length ? (successes.get(result.accountId) ? 'partial' : 'error')
+      : enabledRegions?.length === 0 ? 'skipped' : 'ok';
     result.instances.sort((a, b) => `${a.region}:${a.instanceType}:${a.instanceId}`.localeCompare(`${b.region}:${b.instanceType}:${b.instanceId}`));
     result.errors.sort((a, b) => `${a.region}:${a.service}`.localeCompare(`${b.region}:${b.service}`));
   }

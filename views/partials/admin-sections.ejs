@@ -768,7 +768,7 @@
     <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
       <div>
         <h3 class="text-white text-sm font-medium">🌍 区域筛选</h3>
-        <p class="text-gray-600 text-[11px] mt-0.5">默认只查询各账号的默认区域；关闭下方选项后严格按勾选区域查询，全不选则不查询。<span class="text-cyan-400">EC2+LS</span> 表示该区域同时支持 EC2 与 Lightsail，<span class="text-gray-400">仅 EC2</span> 表示只支持 EC2。</p>
+        <p class="text-gray-600 text-[11px] mt-0.5">自动查询账号可用区域并发现实例，支持同时展示多个区域。关闭自动发现后可手动筛选，全不选则不查询。<span class="text-cyan-400">EC2+LS</span> 表示该区域同时支持 EC2 与 Lightsail，<span class="text-gray-400">仅 EC2</span> 表示只支持 EC2。</p>
       </div>
       <div class="flex gap-2">
         <button type="button" id="btn-aws-regions-all" class="text-xs glass text-gray-300 hover:text-white px-3 py-1.5 rounded-xl transition">全选</button>
@@ -777,8 +777,8 @@
       </div>
     </div>
     <label class="flex items-center gap-2 text-xs text-gray-300 mb-3">
-      <input type="checkbox" id="aws-regions-default" checked>
-      仅查询各账号默认区域（推荐）
+      <input type="checkbox" id="aws-regions-auto" checked>
+      自动发现实例所在区域（推荐，无需填写区域）
     </label>
     <div id="aws-regions-list" class="text-center py-6 text-gray-500 text-xs">⏳ 加载中...</div>
   </div>
@@ -796,12 +796,6 @@
       <div>
         <label class="text-gray-500 text-xs block mb-1">Access Key ID</label>
         <input type="password" id="aws-ak" placeholder="AKIA..." class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
-      </div>
-      <div class="col-span-2">
-        <label for="aws-default-region" class="text-gray-500 text-xs block mb-1">默认区域（请选择实例所在区域）</label>
-        <select id="aws-default-region" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
-          <option value="us-east-1">弗吉尼亚 · us-east-1</option>
-        </select>
       </div>
       <div class="col-span-2">
         <label class="text-gray-500 text-xs block mb-1">Secret Access Key</label>
@@ -858,12 +852,6 @@
         <div>
           <label class="text-gray-500 text-xs block mb-1">备注 / 账号名</label>
           <input type="text" id="edit-aws-name" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
-        </div>
-        <div>
-          <label for="edit-aws-default-region" class="text-gray-500 text-xs block mb-1">默认区域</label>
-          <select id="edit-aws-default-region" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
-            <option value="us-east-1">弗吉尼亚 · us-east-1</option>
-          </select>
         </div>
         <div class="grid grid-cols-2 gap-2">
           <div>

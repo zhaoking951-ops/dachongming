@@ -84,7 +84,7 @@ test('migration accepts the manually created production schema without changing 
   assert.equal(db.getAwsAccounts()[0].socks5_pass, 'fake-proxy-password');
 });
 
-function serviceHarness({ db, saved = null, accounts, send } = {}) {
+function serviceHarness({ db, saved = null, accounts, send, discover } = {}) {
   const rows = accounts || [{ id: 1, name: 'Singapore', enabled: 1, default_region: 'ap-southeast-1',
     access_key: 'fake', secret_key: 'fake' }];
   const fakeDb = db || { getAwsAccounts: () => rows, getAwsAccountById: id => rows.find(a => a.id === id),
@@ -92,11 +92,18 @@ function serviceHarness({ db, saved = null, accounts, send } = {}) {
   const calls = [];
   let active = 0, peak = 0, destroyed = 0;
   const client = service => class {
-    constructor(config) { this.region = config.region; }
+    constructor(config) {
+      this.region = config.region;
+      this.accountId = fakeDb.getAwsAccounts().find(a => a.access_key === config.credentials.accessKeyId)?.id;
+    }
     async send(command, options) {
-      calls.push({ service, region: this.region, command, options });
+      const discovery = ['DescribeRegionsCommand', 'GetRegionsCommand'].includes(command.constructor.name);
+      calls.push({ service, region: this.region, command, options, discovery, accountId: this.accountId });
       active++; peak = Math.max(peak, active);
       try {
+        if (discovery) return discover ? await discover({ service, command, options, accountId: this.accountId })
+          : service === 'ec2' ? { Regions: [{ RegionName: 'ap-southeast-1', OptInStatus: 'opt-in-not-required' }] }
+            : { regions: [{ name: 'ap-southeast-1' }] };
         return send ? await send({ service, region: this.region, command, options })
           : service === 'ec2' ? { Reservations: [] } : { instances: [] };
       } finally { active--; }
@@ -119,21 +126,83 @@ for (const [label, saved, expected] of [
   test(`discovery respects ${label} region configuration`, async () => {
     const h = serviceHarness({ saved });
     const [result] = await h.aws.listAllInstances();
-    assert.deepEqual([...new Set(h.calls.map(c => c.region))], expected);
-    assert.equal(h.calls.length, expected.length * 2);
+    const instanceCalls = h.calls.filter(c => !c.discovery);
+    assert.deepEqual([...new Set(instanceCalls.map(c => c.region))], expected);
+    assert.equal(instanceCalls.length, expected.length * 2);
     assert.equal(result.status, expected.length ? 'ok' : 'skipped');
     assert.equal(h.destroyed(), h.calls.length);
   });
 }
 
-test('defaults follow each account instead of adding every account region to a global scan', async () => {
+test('automatic discovery uses each account response and ignores stale default regions', async () => {
   const h = serviceHarness({ accounts: [
-    { id: 1, enabled: 1, default_region: 'ap-southeast-1' },
-    { id: 2, enabled: 1, default_region: 'eu-central-1' }
-  ] });
+    { id: 1, enabled: 1, default_region: 'us-east-1', access_key: 'fake-1' },
+    { id: 2, enabled: 1, default_region: 'ap-southeast-1', access_key: 'fake-2' }
+  ], discover: async ({ service, accountId }) => {
+    const region = accountId === 1 ? 'ap-southeast-1' : 'eu-central-1';
+    return service === 'ec2' ? { Regions: [{ RegionName: region }] } : { regions: [{ name: region }] };
+  } });
   const results = await h.aws.listAllInstances();
   assert.deepEqual(results.map(r => Array.from(r.queriedRegions)).flat(), ['ap-southeast-1', 'eu-central-1']);
-  assert.equal(h.calls.length, 4);
+  assert.equal(h.calls.filter(c => !c.discovery).length, 4);
+  assert.equal(h.calls.filter(c => c.discovery).length, 4);
+});
+
+test('automatic discovery finds multiple regions, skips disabled EC2 regions and accepts new AWS regions', async () => {
+  const h = serviceHarness({ accounts: [{ id: 1, enabled: 1, default_region: 'us-east-1', access_key: 'fake' }],
+    discover: async ({ service, command }) => {
+      if (service === 'lightsail') return { regions: [{ name: 'eu-central-1' }] };
+      assert.equal(command.input.AllRegions, false);
+      return { Regions: [
+        { RegionName: 'ap-southeast-1', OptInStatus: 'opt-in-not-required' },
+        { RegionName: 'ap-southeast-9', OptInStatus: 'opted-in' },
+        { RegionName: 'ap-east-1', OptInStatus: 'not-opted-in' }
+      ] };
+    }, send: async ({ service, region }) => service === 'ec2'
+      ? { Reservations: [{ Instances: [{ InstanceId: 'i-' + region, PublicIpAddress: '192.0.2.1', State: { Name: 'running' } }] }] }
+      : { instances: [{ name: 'ls-europe', state: { name: 'running' }, location: { regionName: region } }] }
+  });
+  const [result] = await h.aws.listAllInstances();
+  assert.deepEqual(Array.from(result.discoveredRegions), ['ap-southeast-1', 'ap-southeast-9', 'eu-central-1']);
+  assert.equal(result.instances.length, 3);
+  assert.equal(result.status, 'ok');
+  assert.ok(!h.calls.some(c => !c.discovery && ['us-east-1', 'ap-east-1'].includes(c.region)));
+});
+
+test('missing permission to enumerate regions falls back visibly without hiding accessible instances', async () => {
+  const h = serviceHarness({ discover: async ({ service }) => {
+    if (service === 'lightsail') return { regions: [] };
+    throw Object.assign(new Error('do-not-expose-this-secret'), { name: 'UnauthorizedOperation' });
+  }, send: async ({ service, region }) => ({ Reservations: service === 'ec2' && region === 'ap-southeast-1'
+    ? [{ Instances: [{ InstanceId: 'i-singapore', PublicIpAddress: '192.0.2.1' }] }] : [] }) });
+  const [result] = await h.aws.listAllInstances();
+  assert.equal(result.status, 'partial');
+  assert.equal(result.instances[0].instanceId, 'i-singapore');
+  assert.equal(result.errors[0].operation, 'DescribeRegions');
+  assert.equal(result.errors[0].code, 'UnauthorizedOperation');
+  assert.ok(!JSON.stringify(result).includes('do-not-expose-this-secret'));
+});
+
+test('empty region directories do not invent an account home region or start a fallback scan', async () => {
+  const h = serviceHarness({ discover: async ({ service }) => service === 'ec2' ? { Regions: [] } : { regions: [] } });
+  const [result] = await h.aws.listAllInstances();
+  assert.equal(result.status, 'ok');
+  assert.equal(result.queriedRegions.length, 0);
+  assert.equal(result.discoveredRegions.length, 0);
+  assert.equal(h.calls.length, 2);
+});
+
+test('automatic region enumeration is included in the refresh timeout budget', async () => {
+  let aborted = 0;
+  const h = serviceHarness({ discover: ({ options }) => new Promise((_, reject) => {
+    options.abortSignal.addEventListener('abort', () => { aborted++; reject(Object.assign(new Error('abort'), { name: 'AbortError' })); }, { once: true });
+  }) });
+  const [result] = await h.aws.listAllInstances({ requestTimeoutMs: 1000, timeoutMs: 25 });
+  assert.equal(result.status, 'error');
+  assert.equal(aborted, 2);
+  assert.equal(h.calls.filter(c => !c.discovery).length, 0);
+  assert.equal(result.errors.filter(e => e.operation).length, 2);
+  assert.ok(result.errors.every(e => e.code === 'TimeoutError'));
 });
 
 test('partial AWS failure keeps EC2 instances and exposes safe regional errors', async () => {
@@ -169,8 +238,8 @@ test('discovery follows EC2 and Lightsail pagination and closes clients', async 
   } });
   const [result] = await h.aws.listAllInstances();
   assert.equal(result.instances.length, 4);
-  assert.equal(h.calls.length, 4);
-  assert.equal(h.destroyed(), 2);
+  assert.equal(h.calls.filter(c => !c.discovery).length, 4);
+  assert.equal(h.destroyed(), 4);
 });
 
 test('refresh caps concurrent queries and reports aborts plus unstarted work at the deadline', async () => {
@@ -228,16 +297,16 @@ test('HTTP account create/edit/read persists Singapore, validates regions and pr
   assert.equal(db.getAwsAccounts().length, 1);
 });
 
-test('HTTP region settings and discovery agree for defaults, empty, explicit and reset modes', async t => {
+test('HTTP region settings and discovery agree for automatic, empty, explicit and reset modes', async t => {
   const { db } = database(t);
   addAccount(db);
   const h = serviceHarness({ db });
   const request = await routes(t, db, h.aws);
-  assert.equal((await request('/aws/regions')).data.useAccountDefaults, true);
+  assert.equal((await request('/aws/regions')).data.autoDiscover, true);
   for (const regions of [[], ['us-west-2'], null]) {
     assert.equal((await request('/aws/regions', 'POST', { regions })).status, 200);
     const setting = (await request('/aws/regions')).data;
-    assert.equal(setting.useAccountDefaults, regions === null);
+    assert.equal(setting.autoDiscover, regions === null);
     assert.deepEqual(setting.enabled, regions || []);
     const [result] = (await request('/aws/all-instances')).data;
     assert.deepEqual(result.queriedRegions, regions || ['ap-southeast-1']);
@@ -326,7 +395,7 @@ function browserHarness() {
     fetch: async (url, options = {}) => {
       requests.push({ url, body: options.body ? JSON.parse(options.body) : undefined, method: options.method || 'GET' });
       let data = { ok: true };
-      if (url.endsWith('/regions') && !options.method) data = { all: ['us-east-1', 'ap-southeast-1'], meta: {}, enabled: [], useAccountDefaults: true };
+      if (url.endsWith('/regions') && !options.method) data = { all: ['us-east-1', 'ap-southeast-1'], meta: {}, enabled: [], autoDiscover: true };
       else if (url.endsWith('/config') && !options.method) data = { accounts: [account], configured: true, count: 1 };
       else if (url.includes('/all-instances')) data = fetchInstances ? await fetchInstances() : nextInstances;
       return { ok: true, json: async () => data };
@@ -340,21 +409,21 @@ function browserHarness() {
     ready: () => new Promise(resolve => setImmediate(resolve)) };
 }
 
-test('browser loads #aws directly and sends the selected region on account creation/edit without erasing proxy auth', async () => {
+test('browser adds an account without a region and automatically refreshes; editing preserves proxy auth', async () => {
   const h = browserHarness();
   await h.ready();
-  assert.equal(h.context._awsAccounts[0].defaultRegion, 'ap-southeast-1');
-  assert.match(h.element('aws-accounts').innerHTML, /ap-southeast-1/);
+  assert.equal(h.context._awsAccounts[0].id, 1);
+  assert.match(h.element('aws-accounts').innerHTML, /自动发现实例区域/);
   h.element('aws-name').value = 'test'; h.element('aws-ak').value = 'fake'; h.element('aws-sk').value = 'fake';
-  h.element('aws-default-region').value = 'ap-southeast-1';
   await h.context.saveAwsConfig();
-  assert.equal(h.requests.find(r => r.method === 'POST').body.defaultRegion, 'ap-southeast-1');
+  assert.equal(Object.hasOwn(h.requests.find(r => r.method === 'POST').body, 'defaultRegion'), false);
+  assert.ok(h.requests.some(r => r.url.includes('/all-instances')));
   h.context.editAwsAccount(1);
-  assert.equal(h.element('edit-aws-default-region').value, 'ap-southeast-1');
-  h.element('edit-aws-default-region').value = 'us-east-1';
+  h.element('edit-aws-name').value = 'updated';
   await h.context.saveAwsEdit();
   const edit = h.requests.find(r => r.method === 'PUT').body;
-  assert.equal(edit.defaultRegion, 'us-east-1');
+  assert.equal(edit.name, 'updated');
+  assert.equal(Object.hasOwn(edit, 'defaultRegion'), false);
   assert.equal(Object.hasOwn(edit, 'socks5Url'), false);
 });
 
@@ -390,9 +459,9 @@ test('browser caches successful scans only and ignores responses from before a c
   assert.match(h.element('aws-instances-container').textContent, /配置已更新/);
 });
 
-test('browser region selector distinguishes account defaults and explicit empty selections', async () => {
+test('browser region selector distinguishes automatic discovery and explicit empty selections', async () => {
   const h = browserHarness(); await h.ready();
-  assert.equal(h.element('aws-regions-default').checked, true);
+  assert.equal(h.element('aws-regions-auto').checked, true);
   await h.element('btn-aws-regions-save').listeners.click();
   assert.equal(h.requests.filter(r => r.method === 'POST').at(-1).body.regions, null);
   h.element('btn-aws-regions-none').listeners.click();

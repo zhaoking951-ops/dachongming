@@ -216,7 +216,7 @@ router.get('/aws/regions', (req, res) => {
     all: aws.ALL_AWS_REGIONS,
     meta: aws.AWS_REGION_META,
     enabled: enabled || [],
-    useAccountDefaults: enabled === null,
+    autoDiscover: enabled === null,
   });
 });
 
@@ -224,14 +224,14 @@ router.get('/aws/regions', (req, res) => {
 router.post('/aws/regions', (req, res) => {
   const { regions } = req.body || {};
   if (regions !== null && (!Array.isArray(regions) || !regions.every(validateRegion))) {
-    return res.status(400).json({ error: '参数 regions 必须为有效区域数组，或 null（账号默认区域）' });
+    return res.status(400).json({ error: '参数 regions 必须为有效区域数组，或 null（自动发现）' });
   }
   const valid = regions === null ? null : [...new Set(regions)];
   db.setSetting('aws_enabled_regions', JSON.stringify(valid));
   // 清缓存让下次刷新立即生效
   invalidateAwsInstances();
-  db.addAuditLog(req.user.id, 'aws_enabled_regions', `更新启用区域: ${valid === null ? '账号默认区域' : valid.length + ' 个'}`, req.clientIp || req.ip);
-  res.json({ ok: true, count: valid?.length || 0, useAccountDefaults: valid === null });
+  db.addAuditLog(req.user.id, 'aws_enabled_regions', `更新启用区域: ${valid === null ? '自动发现' : valid.length + ' 个'}`, req.clientIp || req.ip);
+  res.json({ ok: true, count: valid?.length || 0, autoDiscover: valid === null });
 });
 
 router.post('/aws/start', async (req, res) => {
