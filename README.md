@@ -51,6 +51,14 @@ bash <(curl -sL https://raw.githubusercontent.com/vzzoxo/xiaoyizi/main/install.s
 
 首个注册的用户自动成为管理员。
 
+使用自己的 Fork 新安装时，显式指定仓库（将 `YOUR_ACCOUNT` 替换为你的 GitHub 账号）：
+
+```bash
+REPO_URL=https://github.com/YOUR_ACCOUNT/xiaoyizi.git bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_ACCOUNT/xiaoyizi/main/install.sh)
+```
+
+已有安装更新时保留当前 `origin`，不会根据 `REPO_URL` 切回上游。首次从上游切换到 Fork 时，先备份 `.env`、`data/`、`backups/` 和节点配置，再用 `git remote set-url origin <你的 Fork 地址>` 设置更新来源。
+
 ### 手动部署
 
 ```bash
@@ -75,6 +83,9 @@ pm2 start ecosystem.config.js
 | `OPS_API_KEY` | | OPS API Bearer Token（不填则 OPS API 不可用） |
 | `SUB_LINK_SIGN_MODE` | | 订阅签名（`off` / `observe` / `enforce`） |
 | `TRUST_PROXY` | | Nginx/Cloudflare 反代信任层数（默认 `1`） |
+| `REALITY_SNI` | | VLESS Reality 默认 target/serverName，默认 `www.bing.com`，只填域名，target 使用 443 |
+
+Reality 的部署、配置同步和各类订阅共用同一默认值：节点保存的 SNI 优先，其次使用 `REALITY_SNI`，最后回退到 `www.bing.com`。新部署会把选定 SNI 保存到节点；修改环境变量不会覆盖已有节点。切换已有节点的 target 前应验证目标的 TLS/Reality 兼容性，并同步服务端和客户端配置。
 
 生成强随机密钥：
 

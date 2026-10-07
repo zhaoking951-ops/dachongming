@@ -4,6 +4,7 @@
  */
 const { v4: uuidv4 } = require('uuid');
 const logger = require('./logger');
+const { DEFAULT_REALITY_SNI } = require('../utils/reality');
 
 function normalizeDuplicateNodeNames(db) {
   const rows = db.prepare('SELECT id, name FROM nodes ORDER BY name, created_at, id').all();
@@ -48,7 +49,7 @@ function runMigrations(db) {
       ALTER TABLE nodes ADD COLUMN reality_private_key TEXT;
       ALTER TABLE nodes ADD COLUMN reality_public_key TEXT;
       ALTER TABLE nodes ADD COLUMN reality_short_id TEXT;
-      ALTER TABLE nodes ADD COLUMN sni TEXT DEFAULT 'www.microsoft.com';
+      ALTER TABLE nodes ADD COLUMN sni TEXT DEFAULT '${DEFAULT_REALITY_SNI}';
     `);
   }
   if (!cols.includes('aws_instance_id')) {

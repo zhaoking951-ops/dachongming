@@ -8,7 +8,8 @@ set -eo pipefail
 # ══════════════════════════════════════════════════════════════
 
 INSTALL_DIR="/root/panel"
-REPO_URL="https://github.com/vzzoxo/xiaoyizi.git"
+# 新安装可通过 REPO_URL 指向自己的 Fork；更新始终保留已有 origin。
+REPO_URL="${REPO_URL:-https://github.com/vzzoxo/xiaoyizi.git}"
 NODE_MAJOR=22
 
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'; C='\033[0;36m'; B='\033[1;37m'; N='\033[0m'
@@ -116,6 +117,7 @@ deploy_code() {
   if [ -d "$INSTALL_DIR/.git" ]; then
     ok "更新代码..."
     cd "$INSTALL_DIR"
+    # 不重设 origin，避免 Fork 部署在更新时切回上游。
     git fetch origin main --quiet && git reset --hard origin/main --quiet
   else
     ok "克隆项目..."
@@ -137,7 +139,7 @@ configure_env() {
 
   ensure_key() {
     local key="$1" value="$2"
-    grep -q "^${key}=" .env 2>/dev/null || echo "${key}=${value}" >> .env
+    grep -Eq "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" .env 2>/dev/null || printf '\n%s=%s\n' "$key" "$value" >> .env
   }
 
   if [ -f .env ]; then
@@ -151,6 +153,7 @@ configure_env() {
     ensure_key "LOG_LEVEL" "info"
     ensure_key "TRUST_PROXY" "1"
     ensure_key "SUB_LINK_SIGN_MODE" "off"
+    ensure_key "REALITY_SNI" "${REALITY_SNI:-www.bing.com}"
     return
   fi
 
@@ -176,6 +179,7 @@ SESSION_SECRET=$(openssl rand -hex 32)
 TRUST_PROXY=1
 OPS_API_KEY=$(openssl rand -hex 32)
 SUB_LINK_SIGN_MODE=off
+REALITY_SNI=${REALITY_SNI:-www.bing.com}
 EOF
 
   [ -n "$TG_TOKEN" ] && echo "TG_BOT_TOKEN=${TG_TOKEN}" >> .env

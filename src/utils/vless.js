@@ -1,4 +1,5 @@
 const { formatBytes } = require('./formatBytes');
+const { getRealitySni } = require('./reality');
 const crypto = require('crypto');
 
 // 生成 vless 链接
@@ -6,7 +7,7 @@ function buildVlessLink(node, uuid) {
   const params = new URLSearchParams({ type: node.network || 'tcp' });
   if (node.reality_public_key) {
     params.set('security', 'reality');
-    params.set('sni', node.sni || 'www.microsoft.com');
+    params.set('sni', getRealitySni(node.sni));
     params.set('fp', 'chrome');
     params.set('pbk', node.reality_public_key);
     params.set('sid', node.reality_short_id || '');
@@ -84,7 +85,7 @@ function buildVlessClashProxy(n) {
   };
   if (n.reality_public_key) {
     p.tls = true;
-    p.servername = n.sni || 'www.microsoft.com';
+    p.servername = getRealitySni(n.sni);
     p['reality-opts'] = {
       'public-key': n.reality_public_key,
       'short-id': n.reality_short_id || ''
@@ -103,7 +104,7 @@ function buildVlessSingboxOutbound(n) {
   if (n.reality_public_key) {
     o.flow = 'xtls-rprx-vision';
     o.tls = {
-      enabled: true, server_name: n.sni || 'www.microsoft.com',
+      enabled: true, server_name: getRealitySni(n.sni),
       utls: { enabled: true, fingerprint: 'chrome' },
       reality: { enabled: true, public_key: n.reality_public_key, short_id: n.reality_short_id || '' }
     };

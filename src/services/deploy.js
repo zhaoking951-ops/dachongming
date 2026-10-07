@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const dns = require('dns').promises;
 const { randomPort } = require('../utils/vless');
+const { getRealitySni } = require('../utils/reality');
 const { BEAUTIFUL_NAMES } = require('../utils/names');
 const { getRegionEmoji, getCityCN } = require('../utils/regions');
 const { isPrivateOrLoopback } = require('../utils/clientIp');
@@ -418,7 +419,7 @@ async function syncNodeConfig(node, db) {
           id: u.uuid, level: 0, email: makeEmail(u.user_id, 'vless')
         }));
         const outbounds = buildOutboundsBySocks(peerNode.socks5_host, peerNode.socks5_port, peerNode.socks5_user, peerNode.socks5_pass);
-        const realityOpts = peerNode.reality_private_key ? { privateKey: peerNode.reality_private_key, sni: peerNode.sni || 'www.microsoft.com', shortId: peerNode.reality_short_id } : null;
+        const realityOpts = peerNode.reality_private_key ? { privateKey: peerNode.reality_private_key, sni: getRealitySni(peerNode.sni), shortId: peerNode.reality_short_id } : null;
         const dualConfig = buildDualXrayConfig(peerNode.port, node.port, vlessClients, clients, node.ss_method || 'aes-256-gcm', outbounds, realityOpts);
         return await pushConfigToNode(node, dualConfig);
       }
@@ -433,7 +434,7 @@ async function syncNodeConfig(node, db) {
 
   let outbounds = buildOutboundsBySocks(node.socks5_host, node.socks5_port, node.socks5_user, node.socks5_pass);
 
-  const realityOpts = node.reality_private_key ? { privateKey: node.reality_private_key, sni: node.sni || 'www.microsoft.com', shortId: node.reality_short_id } : null;
+  const realityOpts = node.reality_private_key ? { privateKey: node.reality_private_key, sni: getRealitySni(node.sni), shortId: node.reality_short_id } : null;
 
   // 如果有同机 SS 伙伴节点，生成双协议配置
   const peerNode = findPeerNode(node, db);
@@ -600,7 +601,7 @@ async function deployNode(sshInfo, db) {
       const realityPrivateKey = privMatch[1];
       const realityPublicKey = pubMatch[1];
       const realityShortId = crypto.randomBytes(4).toString('hex');
-      const sni = 'www.microsoft.com';
+      const sni = getRealitySni();
       db.updateNode(nodeId, { reality_private_key: realityPrivateKey, reality_public_key: realityPublicKey, reality_short_id: realityShortId, sni });
       realityOpts = { privateKey: realityPrivateKey, sni, shortId: realityShortId };
     }
@@ -1026,7 +1027,7 @@ async function deployDualNode(sshInfo, db) {
       const realityPrivateKey = privMatch[1];
       const realityPublicKey = pubMatch[1];
       const realityShortId = crypto.randomBytes(4).toString('hex');
-      const sni = 'www.microsoft.com';
+      const sni = getRealitySni();
       db.updateNode(vlessNodeId, { reality_private_key: realityPrivateKey, reality_public_key: realityPublicKey, reality_short_id: realityShortId, sni });
       realityOpts = { privateKey: realityPrivateKey, sni, shortId: realityShortId };
     }
