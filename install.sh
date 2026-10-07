@@ -329,7 +329,7 @@ show_result() {
   local ver; ver=$(node -e "console.log(require('${INSTALL_DIR}/package.json').version)" 2>/dev/null || echo "?")
   echo ""
   echo -e "${G}╔══════════════════════════════════════════════╗${N}"
-  echo -e "${G}║${B}       🍑 部署完成 — v${ver}                    ${G}║${N}"
+  echo -e "${G}║${B}       🧠 部署完成 — v${ver}                    ${G}║${N}"
   echo -e "${G}╚══════════════════════════════════════════════╝${N}"
   echo ""
   echo -e "  🌐 面板:  ${C}https://${DOMAIN}${N}"

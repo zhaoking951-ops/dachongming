@@ -1,5 +1,7 @@
 # 大聪明
 
+<img src="./public/favicon.svg" alt="大聪明 Logo" width="96" height="96">
+
 > 一个为个人和小团队打造的多协议代理管理面板。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
