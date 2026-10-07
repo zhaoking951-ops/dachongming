@@ -2,6 +2,25 @@
 
 window._awsAccounts = [];
 
+function fillAwsRegionSelects(data) {
+  for (const id of ['aws-default-region', 'edit-aws-default-region']) {
+    const select = document.getElementById(id);
+    const selected = select.value || 'us-east-1';
+    select.innerHTML = data.all.map(region => '<option value="' + escapeHtml(region) + '">' +
+      escapeHtml((data.meta[region]?.name || region) + ' · ' + region) + '</option>').join('');
+    select.value = selected;
+  }
+}
+
+function invalidateAwsInstancesCache() {
+  _awsInstancesRevision += 1;
+  try { localStorage.removeItem(AWS_CACHE_KEY); } catch (_) {}
+  document.getElementById('aws-instances-loading').classList.add('hidden');
+  const container = document.getElementById('aws-instances-container');
+  container.textContent = '配置已更新，点击「刷新实例」重新查询';
+  container.classList.remove('hidden');
+}
+
 async function loadAwsConfig() {
   const res = await fetch('/admin/api/aws/config');
   const cfg = await res.json();
@@ -21,7 +40,7 @@ async function loadAwsConfig() {
   list.innerHTML = (cfg.accounts || []).map(a =>
     '<div class="flex items-center justify-between rounded-xl bg-black/20 border border-white/5 px-3 py-2.5">' +
     '<div class="min-w-0"><div class="text-xs text-white font-medium truncate">#' + escapeHtml(a.id) + ' ' + escapeHtml(a.name) + '</div>' +
-    '<div class="text-[11px] text-gray-500 mt-0.5 truncate">' + escapeHtml(a.accessKeyMasked) + (a.socks5_host ? ' · SOCKS ' + escapeHtml(a.socks5_host) + ':' + escapeHtml(a.socks5_port) : '') + '</div></div>' +
+    '<div class="text-[11px] text-gray-500 mt-0.5 truncate">' + escapeHtml(a.accessKeyMasked) + ' · ' + escapeHtml(a.defaultRegion || 'us-east-1') + (a.socks5_host ? ' · SOCKS ' + escapeHtml(a.socks5_host) + ':' + escapeHtml(a.socks5_port) : '') + '</div></div>' +
     '<div class="flex items-center gap-2">' +
     '<button type="button" data-action="edit-aws-account" data-aws-id="' + parseInt(a.id) + '" class="text-gray-300 hover:text-white text-xs px-2 py-1 rounded-lg bg-white/5 border border-white/10">编辑</button>' +
     '<button type="button" data-action="delete-aws-account" data-aws-id="' + parseInt(a.id) + '" class="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded-lg bg-red-500/10 border border-red-500/20">删除</button>' +
@@ -45,6 +64,7 @@ async function loadAwsConfig() {
 
 async function saveAwsConfig() {
   const name = document.getElementById('aws-name').value.trim();
+  const defaultRegion = document.getElementById('aws-default-region').value;
   const ak = document.getElementById('aws-ak').value.trim();
   const sk = document.getElementById('aws-sk').value.trim();
   const socks5Url = document.getElementById('aws-socks-url').value.trim();
@@ -54,9 +74,10 @@ async function saveAwsConfig() {
 
   const res = await fetch('/admin/api/aws/config', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window._csrf || '' },
-    body: JSON.stringify({ name, accessKey: ak, secretKey: sk, socks5Url })
+    body: JSON.stringify({ name, accessKey: ak, secretKey: sk, socks5Url, defaultRegion })
   });
   if (res.ok) {
+    invalidateAwsInstancesCache();
     showToast('✅ AWS 账号已新增');
     ['aws-name', 'aws-ak', 'aws-sk', 'aws-socks-url'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('aws-socks-test-result').textContent = '';
@@ -93,7 +114,7 @@ async function testSocksProxy() {
 async function deleteAwsAccount(id) {
   if (!await _confirm('确定删除该 AWS 账号？')) return;
   const res = await fetch('/admin/api/aws/config/' + id, { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window._csrf || '' } });
-  if (res.ok) { showToast('✅ 已删除账号'); loadAwsConfig(); }
+  if (res.ok) { invalidateAwsInstancesCache(); showToast('✅ 已删除账号'); loadAwsConfig(); }
   else showToast('❌ 删除失败');
 }
 
@@ -102,8 +123,10 @@ function editAwsAccount(id) {
   if (!a) { showToast('账号不存在'); return; }
   document.getElementById('edit-aws-id').value = id;
   document.getElementById('edit-aws-name').value = a.name || '';
+  document.getElementById('edit-aws-default-region').value = a.defaultRegion || 'us-east-1';
   document.getElementById('edit-aws-ak').value = a.accessKeyMasked || '';
   document.getElementById('edit-aws-socks').value = a.socks5_host ? 'socks5://' + a.socks5_host + ':' + (a.socks5_port || 1080) : '';
+  document.getElementById('edit-aws-socks').dataset.originalValue = document.getElementById('edit-aws-socks').value;
   document.getElementById('edit-aws-socks-test').textContent = '';
   document.getElementById('aws-edit-modal').classList.remove('hidden');
 }
@@ -115,15 +138,18 @@ function closeAwsEditModal() {
 async function saveAwsEdit() {
   const id = parseInt(document.getElementById('edit-aws-id').value);
   const name = document.getElementById('edit-aws-name').value.trim();
-  const socks5Url = document.getElementById('edit-aws-socks').value.trim();
+  const defaultRegion = document.getElementById('edit-aws-default-region').value;
+  const socksInput = document.getElementById('edit-aws-socks');
+  // 显示值不含已保存的代理密码。只在用户改动时提交，避免编辑区域时清除代理认证。
+  const socks5Url = socksInput.value.trim() === socksInput.dataset.originalValue ? undefined : socksInput.value.trim();
   if (!id) { showToast('参数错误'); return; }
   if (!name) { showToast('账号名不能为空'); return; }
   const res = await fetch('/admin/api/aws/config/' + id, {
     method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window._csrf || '' },
-    body: JSON.stringify({ name, socks5Url })
+    body: JSON.stringify({ name, socks5Url, defaultRegion })
   });
   const d = await res.json().catch(() => ({}));
-  if (res.ok) { showToast('✅ 账号已更新'); closeAwsEditModal(); loadAwsConfig(); }
+  if (res.ok) { invalidateAwsInstancesCache(); showToast('✅ 账号已更新'); closeAwsEditModal(); loadAwsConfig(); }
   else showToast('❌ ' + (d.error || '更新失败'));
 }
 
@@ -166,36 +192,47 @@ async function swapNodeIp(nodeId, nodeName, btn) {
   done();
 }
 
-const AWS_CACHE_KEY = 'aws_instances_cache';
+const AWS_CACHE_KEY = 'aws_instances_cache_v2';
+let _awsInstancesRevision = 0;
 const AWS_CACHE_TTL = 30 * 60 * 1000; // 30 分钟
 
 async function loadAllInstances(force) {
   const loading = document.getElementById('aws-instances-loading');
   const container = document.getElementById('aws-instances-container');
+  const revision = ++_awsInstancesRevision;
 
   // 非强制刷新时尝试读缓存
   if (!force) {
     try {
       const cached = JSON.parse(localStorage.getItem(AWS_CACHE_KEY) || 'null');
       if (cached && Date.now() - cached.ts < AWS_CACHE_TTL) {
+        loading.classList.add('hidden');
         renderInstances(cached.data, container);
         return;
       }
     } catch (e) { console.warn('AWS cache read failed:', e); }
   }
 
+  loading.textContent = '⏳ 正在查询实例...';
   loading.classList.remove('hidden');
   container.classList.add('hidden');
   try {
     const res = await fetch('/admin/api/aws/all-instances?force=1');
     const accounts = await res.json();
+    if (revision !== _awsInstancesRevision) return;
     if (!res.ok) throw new Error(accounts.error || '加载失败');
 
-    localStorage.setItem(AWS_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: accounts }));
+    try {
+      if (accounts.every(a => !a.errors?.length)) {
+        localStorage.setItem(AWS_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: accounts }));
+      } else localStorage.removeItem(AWS_CACHE_KEY);
+    } catch (_) { /* 禁用浏览器存储时仍显示查询结果 */ }
     renderInstances(accounts, container);
     loading.classList.add('hidden');
     container.classList.remove('hidden');
   } catch (e) {
+    if (revision !== _awsInstancesRevision) return;
+    try { localStorage.removeItem(AWS_CACHE_KEY); } catch (_) {}
     loading.textContent = '❌ ' + e.message;
   }
 }
@@ -212,9 +249,20 @@ function renderInstances(accounts, container) {
 
     let html = '';
     for (const acc of accounts) {
-      if (acc.instances.length === 0) continue;
       html += '<div class="mb-5">' +
         '<div class="text-sm text-gray-400 mb-3 px-1">📦 ' + escapeHtml(acc.accountName) + ' <span class="text-gray-600">#' + escapeHtml(acc.accountId) + '</span></div>';
+
+      const errors = acc.errors || [];
+      if (errors.length) {
+        html += '<div class="text-xs text-red-400 mb-3 px-3 py-2 rounded-xl bg-red-500/10">' +
+          (acc.status === 'error' ? '查询失败，无法确认是否有实例' : '部分查询失败，以下结果可能不完整') +
+          '<ul class="mt-1">' + errors.map(e => '<li>' + escapeHtml(e.region) + ' · ' +
+            escapeHtml(e.service.toUpperCase()) + ' · ' + escapeHtml(e.code) + '：' + escapeHtml(e.message) + '</li>').join('') + '</ul></div>';
+      } else if (acc.instances.length === 0) {
+        html += '<p class="text-gray-500 text-xs mb-3">' + (acc.status === 'skipped'
+          ? '未选择查询区域，请调整区域筛选后刷新'
+          : '所选区域暂无实例：' + escapeHtml((acc.queriedRegions || []).join(', '))) + '</p>';
+      }
 
       const byRegion = {};
       for (const inst of acc.instances) {
@@ -309,3 +357,124 @@ async function awsSwapIp(instanceId, type, region, accountId) {
     }
   } catch (e) { showToast('❌ 网络错误'); }
 }
+
+// ─── AWS 区域筛选 ───
+let _awsRegionsData = null;
+async function loadAwsRegions() {
+  const container = document.getElementById('aws-regions-list');
+  if (!container) return;
+  try {
+    const res = await fetch('/admin/api/aws/regions', { credentials: 'same-origin' });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || '区域加载失败');
+    _awsRegionsData = d;
+    fillAwsRegionSelects(d);
+    renderAwsRegions(d);
+  } catch (e) {
+    container.innerHTML = '<span class="text-red-400">加载失败</span>';
+  }
+}
+function renderAwsRegions(d) {
+  const container = document.getElementById('aws-regions-list');
+  const enabledSet = new Set(d.enabled);
+  document.getElementById('aws-regions-default').checked = d.useAccountDefaults;
+  // 按分组组织
+  const groups = {};
+  for (const region of d.all) {
+    const meta = d.meta[region] || { group: '其他', name: region };
+    if (!groups[meta.group]) groups[meta.group] = [];
+    groups[meta.group].push({ region, name: meta.name });
+  }
+  const groupOrder = ['美洲', '欧洲', '亚太', '中东与非洲', '其他'];
+  const sortedGroups = Object.keys(groups).sort((a, b) => groupOrder.indexOf(a) - groupOrder.indexOf(b));
+  let html = '';
+  for (const g of sortedGroups) {
+    html += `<div class="mb-4 last:mb-0">
+      <h4 class="text-gray-400 text-xs font-medium mb-2 uppercase tracking-wider">${g}</h4>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">`;
+    for (const item of groups[g]) {
+      const checked = enabledSet.has(item.region) ? 'checked' : '';
+      const meta = d.meta[item.region] || {};
+      const lsBadge = meta.lightsail
+        ? '<span class="text-[9px] px-1 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/20">EC2+LS</span>'
+        : '<span class="text-[9px] px-1 py-0.5 rounded bg-gray-500/15 text-gray-500 border border-gray-500/20">仅 EC2</span>';
+      html += `<label class="flex items-center justify-between p-2.5 rounded-xl bg-black/20 cursor-pointer hover:bg-white/5 transition">
+        <div class="flex flex-col text-left min-w-0 flex-1">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <span class="text-white text-xs truncate">${item.name}</span>
+            ${lsBadge}
+          </div>
+          <span class="text-gray-600 text-[10px] font-mono">${item.region}</span>
+        </div>
+        <div class="relative shrink-0 ml-2">
+          <input type="checkbox" data-region="${item.region}" class="js-aws-region-toggle sr-only peer" ${checked}>
+          <div class="w-9 h-5 bg-gray-600 rounded-full peer-checked:bg-rose-500 transition-colors"></div>
+          <div class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-4"></div>
+        </div>
+      </label>`;
+    }
+    html += '</div></div>';
+  }
+  container.innerHTML = html;
+  container.classList.remove('text-center', 'py-6');
+  updateAwsRegionsCount();
+}
+function updateAwsRegionsCount() {
+  const all = document.querySelectorAll('.js-aws-region-toggle');
+  const checked = document.querySelectorAll('.js-aws-region-toggle:checked');
+  const btnSave = document.getElementById('btn-aws-regions-save');
+  const useDefaults = document.getElementById('aws-regions-default').checked;
+  all.forEach(c => { c.disabled = useDefaults; });
+  if (btnSave) btnSave.textContent = useDefaults ? '保存（账号默认区域）' : `保存 (${checked.length}/${all.length})`;
+}
+document.addEventListener('change', (e) => {
+  if (e.target?.classList?.contains('js-aws-region-toggle') || e.target?.id === 'aws-regions-default') updateAwsRegionsCount();
+});
+document.getElementById('btn-aws-regions-all')?.addEventListener('click', () => {
+  document.getElementById('aws-regions-default').checked = false;
+  document.querySelectorAll('.js-aws-region-toggle').forEach(c => { c.checked = true; });
+  updateAwsRegionsCount();
+});
+document.getElementById('btn-aws-regions-none')?.addEventListener('click', () => {
+  document.getElementById('aws-regions-default').checked = false;
+  document.querySelectorAll('.js-aws-region-toggle').forEach(c => { c.checked = false; });
+  updateAwsRegionsCount();
+});
+document.getElementById('btn-aws-regions-save')?.addEventListener('click', async () => {
+  const regions = document.getElementById('aws-regions-default').checked ? null
+    : Array.from(document.querySelectorAll('.js-aws-region-toggle:checked')).map(c => c.dataset.region);
+  const btn = document.getElementById('btn-aws-regions-save');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/admin/api/aws/regions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window._csrf || '' },
+      body: JSON.stringify({ regions }),
+    });
+    const d = await res.json();
+    if (d.ok) {
+      invalidateAwsInstancesCache();
+      showToast(d.useAccountDefaults ? '✅ 已改为查询各账号默认区域' : `✅ 已保存 ${d.count} 个启用区域`);
+    }
+    else showToast('❌ ' + (d.error || '保存失败'));
+  } catch { showToast('❌ 网络错误'); }
+  btn.disabled = false;
+  updateAwsRegionsCount();
+});
+// 切换到 AWS Tab 时加载（也支持页面初次直接进入 AWS Tab）
+// 监听点击和键盘切换两种入口
+document.querySelectorAll('.tab-btn[data-tab="aws"]').forEach(b => b.addEventListener('click', () => {
+  if (!_awsRegionsData) loadAwsRegions();
+}));
+// hash 直接定位到 #aws，或包装 switchTab 钩子
+if (typeof window.switchTab === 'function') {
+  const _origSwitch = window.switchTab;
+  window.switchTab = function (name) {
+    _origSwitch(name);
+    if (name === 'aws' && !_awsRegionsData) loadAwsRegions();
+  };
+}
+// 进入页面时直接加载（即便不在 aws tab 也无副作用，只是预先填好数据）
+loadAwsRegions();
+// core.js 先加载，直接进入 #aws 时需要在本模块就绪后读取账号。
+if (location.hash === '#aws') loadAwsConfig();

@@ -11,6 +11,18 @@ const router = express.Router();
 
 // AWS 实例缓存
 let _awsInstancesCache = { data: null, ts: 0 };
+let _awsCacheRevision = 0;
+let _awsInstancesPending = null;
+
+function invalidateAwsInstances() {
+  _awsCacheRevision += 1;
+  _awsInstancesCache = { data: null, ts: 0 };
+  _awsInstancesPending = null;
+}
+
+function validateRegion(value) {
+  return typeof value === 'string' && aws.ALL_AWS_REGIONS.includes(value);
+}
 
 function parseSocks5Url(socks5Url) {
   if (!socks5Url) return { host: null, port: 1080, user: null, pass: null };
@@ -40,18 +52,20 @@ router.get('/aws/config', (req, res) => {
 });
 
 router.post('/aws/config', (req, res) => {
-  const { name, accessKey, secretKey, socks5Url } = req.body;
+  const { name, accessKey, secretKey, socks5Url, defaultRegion = 'us-east-1' } = req.body || {};
   if (!name || !accessKey || !secretKey) {
     return res.status(400).json({ error: '请填写账号名、Access Key、Secret Key' });
   }
+  if (!validateRegion(defaultRegion)) return res.status(400).json({ error: '请选择有效的 AWS 默认区域' });
   let socks = { host: null, port: 1080, user: null, pass: null };
   try { socks = parseSocks5Url(socks5Url); } catch (e) {
     return res.status(400).json({ error: `SOCKS5 URL 格式错误: ${e.message}` });
   }
   aws.setAwsConfig({
-    name, accessKey, secretKey, defaultRegion: 'us-east-1',
+    name, accessKey, secretKey, defaultRegion,
     socks5Host: socks.host, socks5Port: socks.port, socks5User: socks.user, socks5Pass: socks.pass
   });
+  invalidateAwsInstances();
   db.addAuditLog(req.user.id, 'aws_config', `新增 AWS 账号: ${name}`, req.clientIp || req.ip);
   res.json({ ok: true });
 });
@@ -61,8 +75,12 @@ router.put('/aws/config/:id', (req, res) => {
   if (!id) return res.status(400).json({ error: '参数错误' });
   const current = db.getAwsAccountById(id);
   if (!current) return res.status(404).json({ error: '账号不存在' });
-  const { name, socks5Url } = req.body || {};
+  const { name, socks5Url, defaultRegion } = req.body || {};
   const updates = { name: name || current.name };
+  if (defaultRegion !== undefined) {
+    if (!validateRegion(defaultRegion)) return res.status(400).json({ error: '请选择有效的 AWS 默认区域' });
+    updates.default_region = defaultRegion;
+  }
   if (socks5Url !== undefined) {
     let socks;
     try {
@@ -73,6 +91,7 @@ router.put('/aws/config/:id', (req, res) => {
     Object.assign(updates, { socks5_host: socks.host, socks5_port: socks.port, socks5_user: socks.user, socks5_pass: socks.pass });
   }
   db.updateAwsAccount(id, updates);
+  invalidateAwsInstances();
   db.addAuditLog(req.user.id, 'aws_config_edit', `编辑 AWS 账号 #${id}`, req.clientIp || req.ip);
   res.json({ ok: true });
 });
@@ -81,6 +100,7 @@ router.delete('/aws/config/:id', (req, res) => {
   const id = parseIntId(req.params.id);
   if (!id) return res.status(400).json({ error: '参数错误' });
   db.deleteAwsAccount(id);
+  invalidateAwsInstances();
   db.addAuditLog(req.user.id, 'aws_config_delete', `删除 AWS 账号 #${id}`, req.clientIp || req.ip);
   res.json({ ok: true });
 });
@@ -168,45 +188,50 @@ router.get('/aws/all-instances', async (req, res) => {
     if (!force && _awsInstancesCache.data && Date.now() - _awsInstancesCache.ts < 600000) {
       return res.json(_awsInstancesCache.data);
     }
-    const results = await aws.listAllInstances();
-    _awsInstancesCache = { data: results, ts: Date.now() };
+    const revision = _awsCacheRevision;
+    if (!_awsInstancesPending) {
+      const pending = aws.listAllInstances();
+      _awsInstancesPending = pending;
+      pending.finally(() => {
+        if (_awsInstancesPending === pending) _awsInstancesPending = null;
+      }).catch(() => {});
+    }
+    const results = await _awsInstancesPending;
+    // 配置变更前发出的请求不能重新填充缓存，失败/部分失败也不能缓存为成功。
+    if (revision === _awsCacheRevision) {
+      _awsInstancesCache = results.every(a => !a.errors?.length)
+        ? { data: results, ts: Date.now() } : { data: null, ts: 0 };
+    }
     res.json(results);
   } catch (e) {
-    if (_awsInstancesCache.data) return res.json(_awsInstancesCache.data);
+    _awsInstancesCache = { data: null, ts: 0 };
     res.status(500).json({ error: '获取全部实例失败' });
   }
 });
 
 // 获取所有 AWS 区域元信息和当前启用列表
 router.get('/aws/regions', (req, res) => {
-  let enabled = aws.ALL_AWS_REGIONS; // 默认全部启用
-  try {
-    const raw = db.getSetting('aws_enabled_regions');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) enabled = parsed;
-    }
-  } catch (_) { /* 配置损坏忽略 */ }
+  const enabled = aws.getEnabledRegions();
   res.json({
     all: aws.ALL_AWS_REGIONS,
     meta: aws.AWS_REGION_META,
-    enabled,
+    enabled: enabled || [],
+    useAccountDefaults: enabled === null,
   });
 });
 
 // 保存启用的区域列表
 router.post('/aws/regions', (req, res) => {
   const { regions } = req.body || {};
-  if (!Array.isArray(regions)) {
-    return res.status(400).json({ error: '参数 regions 必须为数组' });
+  if (regions !== null && (!Array.isArray(regions) || !regions.every(validateRegion))) {
+    return res.status(400).json({ error: '参数 regions 必须为有效区域数组，或 null（账号默认区域）' });
   }
-  // 仅允许已知区域
-  const valid = regions.filter(r => aws.ALL_AWS_REGIONS.includes(r));
+  const valid = regions === null ? null : [...new Set(regions)];
   db.setSetting('aws_enabled_regions', JSON.stringify(valid));
   // 清缓存让下次刷新立即生效
-  _awsInstancesCache = { data: null, ts: 0 };
-  db.addAuditLog(req.user.id, 'aws_enabled_regions', `更新启用区域: ${valid.length} 个`, req.clientIp || req.ip);
-  res.json({ ok: true, count: valid.length });
+  invalidateAwsInstances();
+  db.addAuditLog(req.user.id, 'aws_enabled_regions', `更新启用区域: ${valid === null ? '账号默认区域' : valid.length + ' 个'}`, req.clientIp || req.ip);
+  res.json({ ok: true, count: valid?.length || 0, useAccountDefaults: valid === null });
 });
 
 router.post('/aws/start', async (req, res) => {

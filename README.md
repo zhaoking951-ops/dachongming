@@ -181,6 +181,8 @@ openclaw-ops/               # OpenClaw AI 运维 workspace（可选）
 
 ## 测试
 
+AWS 账号配置、区域筛选与升级注意事项见[管理后台指南的 AWS 章节](./ADMIN-GUIDE.md#aws)。升级会自动补建账号表并保留已有数据；已有账号的默认区域请在页面核对，特别是新加坡实例应选择 `ap-southeast-1`。
+
 ```bash
 npm test
 ```

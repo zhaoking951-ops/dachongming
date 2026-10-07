@@ -34,7 +34,7 @@ function addAwsAccount(account) {
     account.name,
     encrypt(account.access_key),
     encrypt(account.secret_key),
-    account.default_region || 'ap-northeast-1',
+    account.default_region || 'us-east-1',
     account.socks5_host || null,
     account.socks5_port || 1080,
     account.socks5_user || null,

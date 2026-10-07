@@ -33,6 +33,21 @@ function normalizeDuplicateNodeNames(db) {
 }
 
 function runMigrations(db) {
+  // 兼容全新安装、旧数据库升级及已经手工建表的部署，保留现有账号和凭据。
+  db.exec(`CREATE TABLE IF NOT EXISTS aws_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    access_key TEXT NOT NULL,
+    secret_key TEXT NOT NULL,
+    default_region TEXT DEFAULT 'us-east-1',
+    socks5_host TEXT,
+    socks5_port INTEGER DEFAULT 1080,
+    socks5_user TEXT,
+    socks5_pass TEXT,
+    enabled INTEGER DEFAULT 1,
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ─── nodes 表迁移 ───
   const cols = db.prepare("PRAGMA table_info(nodes)").all().map(c => c.name);
   if (!cols.includes('socks5_host')) {

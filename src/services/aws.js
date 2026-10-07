@@ -168,55 +168,53 @@ function resolveEc2PublicIp(instance) {
 }
 
 // 列出实例
-async function listEC2Instances(region, accountId) {
+async function listEC2Instances(region, accountId, sendOptions = {}) {
   const ec2 = getEC2Client(region, accountId);
-  const res = await ec2.send(new DescribeInstancesCommand({}));
-  const instances = [];
-  const missingIpIds = [];
-  for (const r of res.Reservations || []) {
-    for (const i of r.Instances || []) {
-      const nameTag = (i.Tags || []).find(t => t.Key === 'Name');
-      const az = i.Placement?.AvailabilityZone || '';
-      const isWavelength = az.includes('-wl');
-      const publicIp = resolveEc2PublicIp(i);
-      instances.push({
-        instanceId: i.InstanceId,
-        name: nameTag?.Value || '',
-        state: i.State?.Name,
-        publicIp,
-        privateIp: i.PrivateIpAddress,
-        type: i.InstanceType,
-        region: region || getAwsConfig(accountId)?.defaultRegion,
-        launchTime: i.LaunchTime,
-        isWavelength,
-        networkInterfaceId: i.NetworkInterfaces?.[0]?.NetworkInterfaceId,
-        availabilityZone: az
-      });
-      if (i.InstanceId && !publicIp) missingIpIds.push(i.InstanceId);
-    }
-  }
-
-  // 没有公网 IP 的实例，再查一次 EIP（补充 CarrierIp）
-  if (missingIpIds.length) {
-    try {
-      const addrRes = await ec2.send(new DescribeAddressesCommand({
-        Filters: [{ Name: 'instance-id', Values: missingIpIds }]
-      }));
-      const eipMap = new Map();
-      for (const addr of addrRes.Addresses || []) {
-        if (!addr.InstanceId) continue;
-        if (addr.PublicIp) eipMap.set(addr.InstanceId, addr.PublicIp);
-        else if (addr.CarrierIp) eipMap.set(addr.InstanceId, addr.CarrierIp);
-      }
-      for (const inst of instances) {
-        if (!inst.publicIp && inst.instanceId && eipMap.has(inst.instanceId)) {
-          inst.publicIp = eipMap.get(inst.instanceId);
+  try {
+    const instances = [];
+    const missingIpIds = [];
+    let nextToken;
+    do {
+      const res = await ec2.send(new DescribeInstancesCommand({ NextToken: nextToken }), sendOptions);
+      for (const r of res.Reservations || []) {
+        for (const i of r.Instances || []) {
+          const nameTag = (i.Tags || []).find(t => t.Key === 'Name');
+          const az = i.Placement?.AvailabilityZone || '';
+          const publicIp = resolveEc2PublicIp(i);
+          instances.push({
+            instanceId: i.InstanceId, name: nameTag?.Value || '', state: i.State?.Name,
+            publicIp, privateIp: i.PrivateIpAddress, type: i.InstanceType,
+            region: region || getAwsConfig(accountId)?.defaultRegion, launchTime: i.LaunchTime,
+            isWavelength: az.includes('-wl'),
+            networkInterfaceId: i.NetworkInterfaces?.[0]?.NetworkInterfaceId, availabilityZone: az
+          });
+          if (i.InstanceId && !publicIp) missingIpIds.push(i.InstanceId);
         }
       }
-    } catch (_) { /* ignore */ }
-  }
+      nextToken = res.NextToken;
+    } while (nextToken);
 
-  return instances;
+    // 补查 EIP 是可选操作；不影响实例列表，但刷新超时仍应向上传播。
+    if (missingIpIds.length) {
+      try {
+        const addrRes = await ec2.send(new DescribeAddressesCommand({
+          Filters: [{ Name: 'instance-id', Values: missingIpIds }]
+        }), sendOptions);
+        const eipMap = new Map();
+        for (const addr of addrRes.Addresses || []) {
+          if (addr.InstanceId) eipMap.set(addr.InstanceId, addr.PublicIp || addr.CarrierIp);
+        }
+        for (const inst of instances) {
+          if (!inst.publicIp && eipMap.has(inst.instanceId)) inst.publicIp = eipMap.get(inst.instanceId);
+        }
+      } catch (err) {
+        if (sendOptions.abortSignal?.aborted) throw err;
+      }
+    }
+    return instances;
+  } finally {
+    ec2.destroy();
+  }
 }
 
 // 换 IP（EC2 弹性 IP）：释放旧 EIP → 分配新 EIP → 绑定
@@ -361,20 +359,25 @@ async function stopEC2Instance(instanceId, region, accountId) {
 // ========== Lightsail 操作 ==========
 
 // 列出 Lightsail 实例
-async function listLightsailInstances(region, accountId) {
+async function listLightsailInstances(region, accountId, sendOptions = {}) {
   const ls = getLightsailClient(region, accountId);
-  const res = await ls.send(new GetInstancesCommand({}));
-  return (res.instances || []).map(i => ({
-    instanceName: i.name,
-    state: i.state?.name,
-    publicIp: i.publicIpAddress,
-    privateIp: i.privateIpAddress,
-    staticIp: i.isStaticIp,
-    region: i.location?.regionName,
-    az: i.location?.availabilityZone,
-    blueprintId: i.blueprintId,
-    bundleId: i.bundleId
-  }));
+  try {
+    const instances = [];
+    let pageToken;
+    do {
+      const res = await ls.send(new GetInstancesCommand({ pageToken }), sendOptions);
+      instances.push(...(res.instances || []).map(i => ({
+        instanceName: i.name, state: i.state?.name, publicIp: i.publicIpAddress,
+        privateIp: i.privateIpAddress, staticIp: i.isStaticIp,
+        region: i.location?.regionName || region || getAwsConfig(accountId)?.defaultRegion,
+        az: i.location?.availabilityZone, blueprintId: i.blueprintId, bundleId: i.bundleId
+      })));
+      pageToken = res.nextPageToken;
+    } while (pageToken);
+    return instances;
+  } finally {
+    ls.destroy();
+  }
 }
 
 // Lightsail 换 IP：解绑静态 IP → 释放 → 分配新的 → 绑定
@@ -629,84 +632,103 @@ async function tagInstance(instanceId, tags, type, region, accountId) {
 
 // ========== 获取所有账号的所有实例 ==========
 
-async function listAllInstances() {
-  const accounts = db.getAwsAccounts(true); // 只获取启用的
-  const allNodes = db.getAllNodes();
-  // 构建节点映射: accountId:region:aws_instance_id -> node
-  const nodeMap = {};
-  for (const n of allNodes) {
-    if (n.aws_instance_id && n.aws_account_id) {
-      nodeMap[`${n.aws_account_id}:${n.aws_region}:${n.aws_instance_id}`] = n;
+// null = 按账号默认区域；[] = 明确不查询；非空数组 = 严格按用户选择。
+function getEnabledRegions() {
+  try {
+    const parsed = JSON.parse(db.getSetting('aws_enabled_regions') || 'null');
+    if (Array.isArray(parsed)) return [...new Set(parsed.filter(r => ALL_AWS_REGIONS.includes(r)))];
+  } catch (_) { /* 损坏配置回退到账号区域，不进行全区扫描 */ }
+  return null;
+}
+
+function scanTimeout() {
+  return Object.assign(new Error('AWS 查询超时'), { name: 'TimeoutError' });
+}
+
+async function withScanTimeout(query, timeoutMs) {
+  if (timeoutMs <= 0) throw scanTimeout();
+  const controller = new AbortController();
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => query({ abortSignal: controller.signal })),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => { reject(scanTimeout()); controller.abort(); }, timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function describeScanError(err) {
+  // 仅返回错误代码和操作建议，不回传可能含代理密码/签名的原始 SDK 消息。
+  const rawCode = err?.name === 'Error' ? err?.code : (err?.name || err?.code);
+  const code = typeof rawCode === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(rawCode) ? rawCode : 'AwsRequestError';
+  let message = '查询失败，请检查该账号的区域、凭据及网络/代理配置';
+  if (/AccessDenied|Unauthorized|AuthFailure|OptInRequired/i.test(code)) message = '无权查询，请检查 IAM 权限及该区域是否已启用';
+  if (/InvalidClientToken|InvalidAccessKey|Signature|ExpiredToken|Credentials/i.test(code)) message = '凭据无效或已过期，请检查该账号的 Access Key 和 Secret Key';
+  if (/Timeout|Abort/i.test(code)) message = '查询超时，请减少筛选区域或检查网络/代理';
+  return { code, message };
+}
+
+async function listAllInstances({ concurrency = 6, requestTimeoutMs = 12000, timeoutMs = 45000 } = {}) {
+  const accounts = db.getAwsAccounts(true);
+  const nodeMap = new Map();
+  for (const n of db.getAllNodes()) {
+    if (n.aws_instance_id && n.aws_account_id) nodeMap.set(`${n.aws_account_id}:${n.aws_region}:${n.aws_instance_id}`, n);
+  }
+  const enabledRegions = getEnabledRegions();
+  const results = accounts.map(account => ({
+    accountId: account.id, accountName: account.name, instances: [], errors: [],
+    queriedRegions: enabledRegions === null ? [account.default_region || 'us-east-1'] : [...enabledRegions],
+    status: 'ok'
+  }));
+  const jobs = [];
+  for (const result of results) {
+    for (const region of result.queriedRegions) {
+      jobs.push({ result, region, service: 'ec2' });
+      if (LIGHTSAIL_REGIONS.has(region)) jobs.push({ result, region, service: 'lightsail' });
     }
   }
-
-  const results = [];
-  // 决定要查询的区域：若 settings 里配置了启用列表则用之，否则用全集
-  let enabledRegions = null;
-  try {
-    const raw = db.getSetting('aws_enabled_regions');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) enabledRegions = parsed;
-    }
-  } catch (_) { /* 配置损坏忽略，回退到全集 */ }
-  const REGIONS = enabledRegions || ALL_AWS_REGIONS;
-
-  for (const account of accounts) {
-    const accountResult = { accountId: account.id, accountName: account.name, instances: [] };
-    // 每个账号查询启用的区域
-    const regionList = [account.default_region || 'us-east-1', ...REGIONS.filter(r => r !== (account.default_region || 'us-east-1'))];
-    const uniqueRegions = [...new Set(regionList)];
-
-    const promises = uniqueRegions.map(async (region) => {
-      const regionInstances = [];
+  const deadline = Date.now() + timeoutMs;
+  const successes = new Map();
+  let nextJob = 0;
+  async function worker() {
+    while (nextJob < jobs.length) {
+      const { result, region, service } = jobs[nextJob++];
       try {
-        const ec2List = await listEC2Instances(region, account.id);
-        for (const inst of ec2List) {
-          const node = nodeMap[`${account.id}:${region}:${inst.instanceId}`];
-          regionInstances.push({
-            ...inst,
-            instanceType: 'ec2',
-            ec2Type: inst.type,
-            accountId: account.id,
-            accountName: account.name,
+        const list = await withScanTimeout(options => service === 'ec2'
+          ? listEC2Instances(region, result.accountId, options)
+          : listLightsailInstances(region, result.accountId, options),
+        Math.min(requestTimeoutMs, deadline - Date.now()));
+        successes.set(result.accountId, (successes.get(result.accountId) || 0) + 1);
+        for (const inst of list) {
+          if (inst.state === 'terminated') continue;
+          const instanceId = service === 'ec2' ? inst.instanceId : inst.instanceName;
+          const instanceRegion = inst.region || region;
+          const node = nodeMap.get(`${result.accountId}:${instanceRegion}:${instanceId}`);
+          result.instances.push({
+            ...inst, instanceId, name: inst.name || inst.instanceName || '', region: instanceRegion,
+            instanceType: service, ...(service === 'ec2' ? { ec2Type: inst.type } : {}),
+            accountId: result.accountId, accountName: result.accountName,
             boundNode: node ? { id: node.id, name: node.name, host: node.host, remark: node.remark, is_active: node.is_active } : null
           });
         }
-      } catch (e) { /* 区域无权限等忽略 */ }
-      // Lightsail 仅在支持的区域调用（避免不必要的报错和延迟）
-      if (LIGHTSAIL_REGIONS.has(region)) {
-        try {
-          const lsList = await listLightsailInstances(region, account.id);
-          for (const inst of lsList) {
-            const node = nodeMap[`${account.id}:${inst.region || region}:${inst.instanceName}`];
-            regionInstances.push({
-              instanceId: inst.instanceName,
-              name: inst.instanceName,
-              state: inst.state,
-              publicIp: inst.publicIp,
-              region: inst.region || region,
-              instanceType: 'lightsail',
-              bundleId: inst.bundleId,
-              accountId: account.id,
-              accountName: account.name,
-              boundNode: node ? { id: node.id, name: node.name, host: node.host, remark: node.remark, is_active: node.is_active } : null
-            });
-          }
-        } catch (e) { /* 忽略 */ }
+      } catch (err) {
+        const error = { region, service, ...describeScanError(err) };
+        result.errors.push(error);
+        logger.warn({ accountId: result.accountId, ...error }, '[AWS] 实例查询失败');
       }
-      return regionInstances;
-    });
-
-    const regionResults = await Promise.all(promises);
-    for (const ri of regionResults) {
-      accountResult.instances.push(...ri);
     }
-    // 过滤掉 terminated 实例
-    accountResult.instances = accountResult.instances.filter(i => i.state !== 'terminated');
-    results.push(accountResult);
   }
-
+  await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, worker));
+  for (const result of results) {
+    result.status = !result.queriedRegions.length ? 'skipped'
+      : result.errors.length ? (successes.get(result.accountId) ? 'partial' : 'error') : 'ok';
+    result.instances.sort((a, b) => `${a.region}:${a.instanceType}:${a.instanceId}`.localeCompare(`${b.region}:${b.instanceType}:${b.instanceId}`));
+    result.errors.sort((a, b) => `${a.region}:${a.service}`.localeCompare(`${b.region}:${b.service}`));
+  }
   return results;
 }
 
@@ -718,5 +740,5 @@ module.exports = {
   swapNodeIp,
   getLatestUbuntuAmi, launchEC2Instance, launchLightsailInstance,
   waitForInstanceRunning, tagInstance, listAllInstances,
-  ALL_AWS_REGIONS, AWS_REGION_META,
+  ALL_AWS_REGIONS, AWS_REGION_META, getEnabledRegions,
 };
