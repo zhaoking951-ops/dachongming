@@ -77,7 +77,7 @@ echo "✅ agent.js 复制到 ${AGENT_DIR}/"
 # 创建 systemd service
 cat > /etc/systemd/system/vless-agent.service <<EOF
 [Unit]
-Description=VLESS Panel Node Agent
+Description=大聪明 Node Agent
 After=network-online.target
 Wants=network-online.target
 

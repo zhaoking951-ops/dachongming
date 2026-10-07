@@ -2,14 +2,14 @@
 set -eo pipefail
 
 # ══════════════════════════════════════════════════════════════
-# 小姨子 一键部署 v4.2
+# 大聪明 一键部署
 # 支持: Debian 11+ / Ubuntu 20.04+
-# 用法: bash <(curl -sL https://raw.githubusercontent.com/vzzoxo/xiaoyizi/main/install.sh)
+# 用法: bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/dachongming/main/install.sh)
 # ══════════════════════════════════════════════════════════════
 
 INSTALL_DIR="/root/panel"
 # 新安装可通过 REPO_URL 指向自己的 Fork；更新始终保留已有 origin。
-REPO_URL="${REPO_URL:-https://github.com/vzzoxo/xiaoyizi.git}"
+REPO_URL="${REPO_URL:-https://github.com/zhaoking951-ops/dachongming.git}"
 NODE_MAJOR=22
 
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'; C='\033[0;36m'; B='\033[1;37m'; N='\033[0m'
@@ -38,7 +38,7 @@ trap 'on_error $LINENO' ERR
 banner() {
   echo ""
   echo -e "${C}╔══════════════════════════════════════════════╗${N}"
-  echo -e "${C}║${B}            🍑 小姨子 一键部署                ${C}║${N}"
+  echo -e "${C}║${B}            🧠 大聪明 一键部署                ${C}║${N}"
   echo -e "${C}║${N}   多协议节点管理 · TG 互动 · AI 运维        ${C}║${N}"
   echo -e "${C}╚══════════════════════════════════════════════╝${N}"
   echo ""
@@ -336,8 +336,8 @@ show_result() {
   echo -e "  🔧 后台:  ${C}https://${DOMAIN}/admin${N}"
   echo -e "  📁 目录:  ${INSTALL_DIR}"
   echo ""
-  echo -e "  ${Y}📌 首个注册用户自动成为管理员${N}"
-  echo -e "  ${Y}📌 进入后台 → 设置 → 配置 SMTP 后才能注册${N}"
+  echo -e "  ${Y}📌 首个注册用户免邮箱验证码并自动成为管理员${N}"
+  echo -e "  ${Y}📌 后续用户邮箱验证需进入后台 → 设置 → 配置 SMTP${N}"
   echo ""
   echo -e "  常用命令:"
   echo -e "    pm2 logs vless-panel       ${C}# 查看日志${N}"

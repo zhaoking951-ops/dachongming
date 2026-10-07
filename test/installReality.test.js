@@ -65,13 +65,16 @@ for (const custom of [undefined, 'custom.example.org']) {
   });
 }
 
-test('installer uses a custom clone URL and preserves origin on update', { skip: !bashAvailable }, (t) => {
+test('installer defaults to the owned repository, accepts a custom URL and preserves origin on update', { skip: !bashAvailable }, (t) => {
   const dir = fixture(t);
   const stubs = `
 git() { printf '%s\\n' "$*" >> commands.log; }
 npm() { :; }
 deploy_code
 `;
+  run(dir, stubs);
+  assert.match(fs.readFileSync(path.join(dir, 'commands.log'), 'utf8'), /clone --depth 1 https:\/\/github.com\/zhaoking951-ops\/dachongming\.git/);
+  fs.writeFileSync(path.join(dir, 'commands.log'), '');
   run(dir, stubs, { REPO_URL: 'https://github.com/example/fork.git' });
   assert.match(fs.readFileSync(path.join(dir, 'commands.log'), 'utf8'), /clone --depth 1 https:\/\/github.com\/example\/fork\.git/);
   fs.mkdirSync(path.join(dir, '.git'));

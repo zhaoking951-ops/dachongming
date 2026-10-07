@@ -357,7 +357,7 @@ function initTables() {
   upsert.run('smtp_secure', 'false');
   upsert.run('smtp_user', '');
   upsert.run('smtp_pass', '');
-  upsert.run('smtp_from_name', 'VLESS Panel');
+  upsert.run('smtp_from_name', '大聪明');
   upsert.run('smtp_from_email', '');
 
   db.prepare(`

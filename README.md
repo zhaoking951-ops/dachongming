@@ -1,12 +1,14 @@
-# 小姨子
+# 大聪明
 
 > 一个为个人和小团队打造的多协议代理管理面板。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-22%2B-green.svg)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-green.svg)](https://nodejs.org)
 [![Express](https://img.shields.io/badge/Express-5-lightgrey.svg)](https://expressjs.com)
 
 基于 Node.js + Express + SQLite，把用户、节点、订阅、流量、运维放进一套系统。覆盖 VLESS Reality / Shadowsocks / Hysteria 2 三种协议，支持邮箱注册、AWS EC2/Lightsail 节点编排、Telegram 互动游戏、自动化运维巡检。
+
+本项目基于 [vzzoxo/xiaoyizi](https://github.com/vzzoxo/xiaoyizi) 修改维护，感谢上游作者与贡献者。当前公开仓库为 [zhaoking951-ops/dachongming](https://github.com/zhaoking951-ops/dachongming)，保留原项目的 MIT 许可证与版权声明。
 
 ## 功能
 
@@ -39,35 +41,52 @@
 
 ## 快速部署
 
+使用 root 用户在 Debian 11+ / Ubuntu 20.04+ VPS 上运行。提前将面板域名解析到服务器，并开放 TCP 80/443 端口；建议至少 512 MB 内存，低内存机器需预留 Swap。节点使用的端口需另外放行。
+
 ### 一键脚本（推荐）
 
 ```bash
-REPO_URL=https://github.com/zhaoking951-ops/xiaoyizi.git bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/xiaoyizi/main/install.sh)
+REPO_URL=https://github.com/zhaoking951-ops/dachongming.git bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/dachongming/main/install.sh)
 ```
 
-脚本会自动完成：系统依赖 → Node.js 22 → PM2 → 拉取代码 → 配置 .env → Nginx + Let's Encrypt SSL → PM2 启动 → 健康检查。
+脚本会自动完成：系统依赖 → Node.js → PM2 → 拉取代码 → 配置 .env → Nginx + Let's Encrypt SSL → PM2 启动 → 健康检查。默认安装 Node.js 22；已有 Node.js 20 或更高版本时会直接复用。
 
-支持系统：Debian 11+ / Ubuntu 20.04+
+安装目录为 `/root/panel`。PM2 进程名与 Nginx 配置名沿用 `vless-panel`，便于已有部署平滑更新。
 
-首个注册的用户自动成为管理员。
+首个注册用户免邮箱验证码并自动成为管理员；首次打开面板后先完成自己的账号注册。后续用户的邮箱验证需要在后台配置 SMTP，是否开放注册与是否需要邀请码由后台设置控制。
 
-上面的命令会从 `zhaoking951-ops/xiaoyizi` 下载安装脚本，并在新安装时拉取该仓库的代码。如果你将本项目 Fork 到其他 GitHub 账号，需同时替换两个地址（将 `YOUR_ACCOUNT` 替换为对应账号）：
+上面的命令会从 `zhaoking951-ops/dachongming` 下载安装脚本，并在新安装时拉取该仓库的代码。如果你再次 Fork 本项目，需同时替换两个仓库地址：
 
 ```bash
-REPO_URL=https://github.com/YOUR_ACCOUNT/xiaoyizi.git bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_ACCOUNT/xiaoyizi/main/install.sh)
+REPO_URL=https://github.com/YOUR_ACCOUNT/YOUR_REPO.git bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_ACCOUNT/YOUR_REPO/main/install.sh)
 ```
 
-已有安装更新时保留当前 `origin`，不会根据 `REPO_URL` 自动改变仓库地址。首次从上游切换到本 Fork 时，先备份 `.env`、`data/`、`backups/` 和节点配置，再在安装目录中运行 `git remote set-url origin https://github.com/zhaoking951-ops/xiaoyizi.git` 设置更新来源。
+### 已有安装更新
+
+先备份 `.env`、数据库与 `data/`、`backups/` 和节点配置，并检查 `git status`。安装脚本会将已跟踪的代码文件重置为 `origin/main`，请先保存本地代码改动。
+
+已有安装不会根据 `REPO_URL` 自动改变更新来源。从上游或旧仓库名切换时，在安装目录中设置新的 `origin`，再运行当前安装脚本：
+
+```bash
+cd /root/panel && \
+git remote set-url origin https://github.com/zhaoking951-ops/dachongming.git && \
+bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/dachongming/main/install.sh)
+```
+
+更新后可用 `pm2 status`、`pm2 logs vless-panel` 与 `curl -fsS http://127.0.0.1:3000/healthz` 检查服务。若手动修改了监听端口，健康检查地址也需相应调整。
 
 ### 手动部署
 
+先安装 Git、Node.js 22、原生依赖构建工具和 PM2。使用与 `ecosystem.config.js` 一致的 `/root/panel` 目录；手动部署还需自行配置域名、Nginx 和 HTTPS。
+
 ```bash
-git clone https://github.com/zhaoking951-ops/xiaoyizi.git
-cd xiaoyizi
+git clone https://github.com/zhaoking951-ops/dachongming.git /root/panel
+cd /root/panel
 npm install --omit=dev
 cp .env.example .env
 # 编辑 .env，至少填 PANEL_DOMAIN 和 SESSION_SECRET
 pm2 start ecosystem.config.js
+pm2 save
 ```
 
 ## 配置
@@ -138,7 +157,7 @@ openclaw-ops/               # OpenClaw AI 运维 workspace（可选）
 
 ## 技术栈
 
-- **运行时**：Node.js 22+
+- **运行时**：Node.js 20+（新部署建议使用 22）
 - **框架**：Express 5
 - **数据库**：better-sqlite3（同步 API + WAL 模式）
 - **进程管理**：PM2
@@ -170,4 +189,6 @@ npm test
 
 ## 致谢
 
-感谢所有使用过本项目并反馈问题的朋友 🍑
+感谢上游项目 [vzzoxo/xiaoyizi](https://github.com/vzzoxo/xiaoyizi) 的作者与贡献者提供基础实现，也感谢所有反馈问题的使用者。
+
+“大聪明”是基于上游维护的公开衍生版本，沿用 [MIT 许可证](./LICENSE) 并保留原版权声明。

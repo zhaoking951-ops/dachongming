@@ -1,6 +1,8 @@
-# 小姨子
+# 大聪明
 
 面向个人或小团队的多协议代理管理面板，把用户、节点、订阅、流量、运维放进同一套系统。
+
+基于 [vzzoxo/xiaoyizi](https://github.com/vzzoxo/xiaoyizi) 修改维护，感谢上游作者与贡献者。当前公开仓库：[zhaoking951-ops/dachongming](https://github.com/zhaoking951-ops/dachongming)。
 
 ## 核心能力
 
@@ -16,8 +18,10 @@
 ## 安装
 
 ```bash
-REPO_URL=https://github.com/zhaoking951-ops/xiaoyizi.git bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/xiaoyizi/main/install.sh)
+REPO_URL=https://github.com/zhaoking951-ops/dachongming.git bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/dachongming/main/install.sh)
 ```
+
+请使用 root 用户在 Debian/Ubuntu VPS 上运行，并提前配置域名解析与 TCP 80/443 端口。已有安装切换仓库前先备份数据并设置 `origin`，详见[更新说明](./README.md#已有安装更新)。
 
 ## 文档
 
@@ -28,4 +32,4 @@ REPO_URL=https://github.com/zhaoking951-ops/xiaoyizi.git bash <(curl -fsSL https
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](./LICENSE)，保留上游版权声明。

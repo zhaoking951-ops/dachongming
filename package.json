@@ -1,7 +1,7 @@
 {
-  "name": "vless-panel",
+  "name": "dachongming",
   "version": "4.1.1",
-  "description": "",
+  "description": "大聪明 — 基于 xiaoyizi 的多协议代理管理面板",
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",

@@ -43,7 +43,7 @@ router.get('/', (req, res) => {
     smtpPort: parseInt(db.getSetting('smtp_port') || '587', 10) || 587,
     smtpSecure: db.getSetting('smtp_secure') === 'true',
     smtpUser: db.getSetting('smtp_user') || '',
-    smtpFromName: db.getSetting('smtp_from_name') || 'VLESS Panel',
+    smtpFromName: db.getSetting('smtp_from_name') || '大聪明',
     smtpFromEmail: db.getSetting('smtp_from_email') || '',
     tgEvents,
     announcement: db.getSetting('announcement') || '',

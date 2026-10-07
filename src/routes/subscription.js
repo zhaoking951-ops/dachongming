@@ -261,7 +261,7 @@ function handleSubscription(cfg) {
     const finalNodes = exceeded ? [] : nodes;
     const subInfo = `upload=${traffic.total_up}; download=${traffic.total_down}; total=${totalBytes}; expire=0`;
     const finalAllowReason = allowReason === 'ok' ? (exceeded ? 'ok_exceeded' : 'ok') : `${allowReason}${exceeded ? '_exceeded' : ''}`;
-    const panelName = encodeURIComponent('小姨子的诱惑' + cfg.panelSuffix);
+    const panelName = encodeURIComponent('大聪明' + cfg.panelSuffix);
     const trafficInfo = { upload: traffic.total_up, download: traffic.total_down, total: totalBytes };
 
     // 按 clientType 生成响应

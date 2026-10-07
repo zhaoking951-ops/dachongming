@@ -28,7 +28,7 @@ function buildTrafficInfoLinks(trafficInfo, linkBuilder, brandSuffix = '') {
   if (!trafficInfo) return [];
   const links = [];
   const brand = brandSuffix ? ` ${brandSuffix}` : '';
-  links.push(linkBuilder(`🍑 小姨子的诱惑 | cd.sd${brand}`));
+  links.push(linkBuilder(`🧠 大聪明${brand}`));
   const used = trafficInfo.upload + trafficInfo.download;
   if (trafficInfo.total > 0) {
     const remain = Math.max(0, trafficInfo.total - used);

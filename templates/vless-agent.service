@@ -1,5 +1,5 @@
 [Unit]
-Description=VLESS Panel Node Agent
+Description=大聪明 Node Agent
 After=network-online.target
 Wants=network-online.target
 

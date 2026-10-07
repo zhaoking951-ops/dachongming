@@ -82,7 +82,7 @@ router.post('/notify/config', (req, res) => {
 router.post('/notify/test', async (req, res) => {
   try {
     const { send } = require('../../services/notify');
-    await send('🔔 测试通知 - 来自小姨子の后台');
+    await send('🔔 测试通知 - 来自大聪明后台');
     res.json({ ok: true });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -93,7 +93,7 @@ router.post('/smtp/config', (req, res) => {
     const secure = req.body?.secure === true || req.body?.secure === 'true';
     const host = String(req.body?.host || '').trim();
     const user = String(req.body?.user || '').trim();
-    const fromName = String(req.body?.fromName || 'VLESS Panel').trim().slice(0, 64);
+    const fromName = String(req.body?.fromName || '大聪明').trim().slice(0, 64);
     const fromEmail = String(req.body?.fromEmail || '').trim();
     const port = parseInt(req.body?.port, 10) || 587;
     const pass = String(req.body?.pass || '');
@@ -128,7 +128,7 @@ router.post('/smtp/test', async (req, res) => {
     await sendMail({
       to,
       subject: 'SMTP 测试邮件',
-      text: '这是一封来自 VLESS Panel 的 SMTP 测试邮件。',
+      text: '这是一封来自大聪明的 SMTP 测试邮件。',
     });
     db.addAuditLog(req.user.id, 'smtp_test_send', `发送 SMTP 测试邮件到 ${to}`, req.clientIp || req.ip);
     return res.json({ ok: true });

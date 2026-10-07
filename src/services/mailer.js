@@ -20,7 +20,7 @@ function getConfig() {
     secure: toBool(db.getSetting('smtp_secure'), false),
     user: (db.getSetting('smtp_user') || '').trim(),
     pass: decrypt(db.getSetting('smtp_pass')) || '',
-    fromName: (db.getSetting('smtp_from_name') || 'VLESS Panel').trim(),
+    fromName: (db.getSetting('smtp_from_name') || '大聪明').trim(),
     fromEmail: (db.getSetting('smtp_from_email') || '').trim(),
   };
   return cfg;
