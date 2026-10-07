@@ -292,7 +292,7 @@ setup_pm2() {
 setup_openclaw() {
   echo ""
   read -rp "$(echo -e "${C}安装 OpenClaw AI 运维?${N} (y/N): ")" ans
-  [[ "$ans" =~ ^[yY]$ ]] || return
+  [[ "$ans" =~ ^[yY]$ ]] || return 0
 
   # OpenClaw 是可选辅助工具，失败不应阻塞主流程
   # 临时关闭 -e 让本函数中的非致命错误不触发 trap on_error

@@ -65,6 +65,14 @@ for (const custom of [undefined, 'custom.example.org']) {
   });
 }
 
+for (const answer of ['', 'n', 'N']) {
+  test(`installer continues after skipping optional OpenClaw: ${answer || 'Enter'}`, { skip: !bashAvailable }, (t) => {
+    const dir = fixture(t);
+    const output = run(dir, `setup_openclaw <<'ANSWERS'\n${answer}\nANSWERS\nprintf 'INSTALL_FINISHED\\n'`);
+    assert.ok(output.includes('INSTALL_FINISHED'));
+  });
+}
+
 test('installer defaults to the owned repository, accepts a custom URL and preserves origin on update', { skip: !bashAvailable }, (t) => {
   const dir = fixture(t);
   const stubs = `
