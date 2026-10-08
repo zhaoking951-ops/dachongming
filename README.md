@@ -10,7 +10,7 @@
 
 基于 Node.js + Express + SQLite，把用户、节点、订阅、流量、运维放进一套系统。覆盖 VLESS Reality / Shadowsocks / Hysteria 2 三种协议，支持邮箱注册、AWS EC2/Lightsail 节点编排、Telegram 互动游戏、自动化运维巡检。
 
-本项目基于 [vzzoxo/xiaoyizi](https://github.com/vzzoxo/xiaoyizi) 修改维护，感谢上游作者与贡献者。当前公开仓库为 [zhaoking951-ops/dachongming](https://github.com/zhaoking951-ops/dachongming)，保留原项目的 MIT 许可证与版权声明。
+本项目基于 [vzzoxo/xiaoyizi](https://github.com/vzzoxo/xiaoyizi) 修改维护，感谢上游作者与贡献者。当前公开仓库为 [zhaoking951-ops/dacongming](https://github.com/zhaoking951-ops/dacongming)，保留原项目的 MIT 许可证与版权声明。
 
 ## 功能
 
@@ -48,7 +48,7 @@
 ### 一键脚本（推荐）
 
 ```bash
-REPO_URL=https://github.com/zhaoking951-ops/dachongming.git bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/dachongming/main/install.sh)
+REPO_URL=https://github.com/zhaoking951-ops/dacongming.git bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/dacongming/main/install.sh)
 ```
 
 脚本会自动完成：系统依赖 → Node.js → PM2 → 拉取代码 → 配置 .env → Nginx + Let's Encrypt SSL → PM2 启动 → 健康检查。默认安装 Node.js 22；已有 Node.js 20 或更高版本时会直接复用。
@@ -57,7 +57,7 @@ REPO_URL=https://github.com/zhaoking951-ops/dachongming.git bash <(curl -fsSL ht
 
 首个注册用户免邮箱验证码并自动成为管理员；首次打开面板后先完成自己的账号注册。后续用户的邮箱验证需要在后台配置 SMTP，是否开放注册与是否需要邀请码由后台设置控制。
 
-上面的命令会从 `zhaoking951-ops/dachongming` 下载安装脚本，并在新安装时拉取该仓库的代码。如果你再次 Fork 本项目，需同时替换两个仓库地址：
+上面的命令会从 `zhaoking951-ops/dacongming` 下载安装脚本，并在新安装时拉取该仓库的代码。如果你再次 Fork 本项目，需同时替换两个仓库地址：
 
 ```bash
 REPO_URL=https://github.com/YOUR_ACCOUNT/YOUR_REPO.git bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_ACCOUNT/YOUR_REPO/main/install.sh)
@@ -71,8 +71,8 @@ REPO_URL=https://github.com/YOUR_ACCOUNT/YOUR_REPO.git bash <(curl -fsSL https:/
 
 ```bash
 cd /root/panel && \
-git remote set-url origin https://github.com/zhaoking951-ops/dachongming.git && \
-bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/dachongming/main/install.sh)
+git remote set-url origin https://github.com/zhaoking951-ops/dacongming.git && \
+bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/dacongming/main/install.sh)
 ```
 
 更新后可用 `pm2 status`、`pm2 logs vless-panel` 与 `curl -fsS http://127.0.0.1:3000/healthz` 检查服务。若手动修改了监听端口，健康检查地址也需相应调整。
@@ -82,7 +82,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/dachongming/
 先安装 Git、Node.js 22、原生依赖构建工具和 PM2。使用与 `ecosystem.config.js` 一致的 `/root/panel` 目录；手动部署还需自行配置域名、Nginx 和 HTTPS。
 
 ```bash
-git clone https://github.com/zhaoking951-ops/dachongming.git /root/panel
+git clone https://github.com/zhaoking951-ops/dacongming.git /root/panel
 cd /root/panel
 npm install --omit=dev
 cp .env.example .env

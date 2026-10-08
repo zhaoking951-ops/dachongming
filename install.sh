@@ -4,12 +4,12 @@ set -eo pipefail
 # ══════════════════════════════════════════════════════════════
 # 大聪明 一键部署
 # 支持: Debian 11+ / Ubuntu 20.04+
-# 用法: bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/dachongming/main/install.sh)
+# 用法: bash <(curl -fsSL https://raw.githubusercontent.com/zhaoking951-ops/dacongming/main/install.sh)
 # ══════════════════════════════════════════════════════════════
 
 INSTALL_DIR="/root/panel"
 # 新安装可通过 REPO_URL 指向自己的 Fork；更新始终保留已有 origin。
-REPO_URL="${REPO_URL:-https://github.com/zhaoking951-ops/dachongming.git}"
+REPO_URL="${REPO_URL:-https://github.com/zhaoking951-ops/dacongming.git}"
 NODE_MAJOR=22
 
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'; C='\033[0;36m'; B='\033[1;37m'; N='\033[0m'

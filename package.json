@@ -1,5 +1,5 @@
 {
-  "name": "dachongming",
+  "name": "dacongming",
   "version": "4.1.1",
   "description": "大聪明 — 基于 xiaoyizi 的多协议代理管理面板",
   "main": "src/app.js",

@@ -81,7 +81,7 @@ npm() { :; }
 deploy_code
 `;
   run(dir, stubs);
-  assert.match(fs.readFileSync(path.join(dir, 'commands.log'), 'utf8'), /clone --depth 1 https:\/\/github.com\/zhaoking951-ops\/dachongming\.git/);
+  assert.match(fs.readFileSync(path.join(dir, 'commands.log'), 'utf8'), /clone --depth 1 https:\/\/github.com\/zhaoking951-ops\/dacongming\.git/);
   fs.writeFileSync(path.join(dir, 'commands.log'), '');
   run(dir, stubs, { REPO_URL: 'https://github.com/example/fork.git' });
   assert.match(fs.readFileSync(path.join(dir, 'commands.log'), 'utf8'), /clone --depth 1 https:\/\/github.com\/example\/fork\.git/);
